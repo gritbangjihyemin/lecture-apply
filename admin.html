@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>관리자 | 강의 신청</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="style.css">
+<style>
+  .wrap{max-width:1200px}
+  .tabs{display:flex;gap:6px;margin-bottom:16px}
+  .tab{padding:9px 16px;border-radius:10px;border:1px solid var(--line);background:#fff;font:inherit;font-weight:700;cursor:pointer}
+  .tab.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 16px}
+  @media(max-width:720px){.grid2,.grid3{grid-template-columns:1fr}}
+  .toggle{display:flex;align-items:center;gap:8px;font-weight:700;margin:6px 0 10px}
+  .toggle input{width:18px;height:18px;margin:0}
+  .paybox{border:1px solid var(--line);border-radius:12px;padding:14px 14px 0;margin-bottom:14px}
+  .lec-row{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+  .lec-row h3{margin:6px 0 2px;font-size:17px}
+  .acts{display:flex;gap:6px;flex-wrap:wrap}
+  .stat{display:flex;gap:14px;flex-wrap:wrap;font-size:14px;margin-top:6px}
+  .stat b{color:var(--pri)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;background:#fff}
+  th,td{border-bottom:1px solid var(--line);padding:9px 8px;text-align:left;vertical-align:top}
+  th{background:#f8f9fc;font-weight:700;white-space:nowrap;position:sticky;top:0}
+  .tblwrap{overflow:auto;border:1px solid var(--line);border-radius:12px;max-height:70vh}
+  td select{margin:0;padding:5px 6px;font-size:13px;width:auto}
+  td .sm{font-size:12px;color:var(--muted)}
+  .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+  .toolbar select{width:auto;margin:0}
+  .summary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+  .summary div{background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 16px;font-size:13px;color:var(--muted)}
+  .summary b{display:block;font-size:20px;color:var(--ink)}
+  .login{max-width:380px;margin:60px auto}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:10px;font-weight:600;opacity:0;transition:.2s;pointer-events:none}
+  .toast.show{opacity:1}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap"><span class="brand" id="brand">강의 신청 관리자</span><button class="btn sm ghost hidden" id="logout">로그아웃</button></div></header>
+
+<main class="wrap">
+  <!-- 로그인 -->
+  <div class="card login hidden" id="loginForm">
+    <h2>관리자 로그인</h2>
+    <p class="muted">등록된 관리자 구글 계정으로 로그인하세요.</p>
+    <p class="err" id="loginErr"></p>
+    <button class="btn" id="googleLogin">G&nbsp; 구글 계정으로 로그인</button>
+  </div>
+
+  <div id="adminApp" class="hidden">
+    <div class="tabs">
+      <button class="tab on" data-tab="list">강의 목록</button>
+      <button class="tab" data-tab="edit" id="tabEdit">+ 새 강의 등록</button>
+      <button class="tab" data-tab="apps">신청자 관리</button>
+    </div>
+
+    <!-- 강의 목록 -->
+    <section id="pList"></section>
+
+    <!-- 강의 등록/수정 -->
+    <form id="pEdit" class="card hidden" novalidate>
+      <h2 id="editTitle">새 강의 등록</h2>
+      <input type="hidden" name="id">
+      <label>강의명 <i>*</i><input name="title" required></label>
+      <label>강의 소개<textarea name="description" rows="3" placeholder="신청 페이지 상단에 보이는 소개 문구"></textarea></label>
+      <div class="grid2">
+        <label>일정 <i>*</i><textarea name="schedule" rows="2" required placeholder="예) 2026.12.5(토) 10:00~17:00&#10;2026.12.6(일) 10:00~13:00"></textarea></label>
+        <label>첫 강의일 (목록 정렬용)<input name="dateStart" type="date"></label>
+      </div>
+      <div class="grid3">
+        <label>진행 방식 <i>*</i>
+          <select name="format"><option value="offline">오프라인</option><option value="online">온라인</option><option value="hybrid">온·오프라인 병행</option></select>
+        </label>
+        <label>총 시간<input name="totalHours" placeholder="예) 10시간 (2회)"></label>
+        <label>수강료 (원, 무료는 0)<input name="fee" type="number" min="0" step="1000" value="0"></label>
+      </div>
+      <label>장소 / 접속 방법<textarea name="location" rows="2" placeholder="오프라인: 주소·강의실 / 온라인: 'ZOOM (접속 링크는 개별 안내)' 등"></textarea></label>
+      <div class="grid2">
+        <label>정원 (0 = 제한 없음)<input name="capacity" type="number" min="0" value="0"></label>
+        <label>신청 마감일<input name="deadline" type="date"></label>
+      </div>
+      <label>수강 특전<textarea name="benefits" rows="3" placeholder="예) 수료증 발급, 자소서 1:1 첨삭 1회, 교재 무료 제공"></textarea></label>
+
+      <h2 class="sec">할인 설정</h2>
+      <div class="grid3">
+        <label>할인 방식
+          <select name="discType"><option value="none">할인 없음</option><option value="percent">할인율 (%)</option><option value="amount">정액 할인 (원)</option></select>
+        </label>
+        <label id="discValLbl">할인 값<input name="discValue" type="number" min="0" value="0"></label>
+        <label>할인 이름<input name="discLabel" placeholder="예) 얼리버드, 재학생, 재수강"></label>
+      </div>
+      <div class="grid2">
+        <label>할인 마감일 (비우면 계속 적용)<input name="discUntil" type="date"></label>
+        <div></div>
+      </div>
+      <div class="disc-preview" id="discPreview"></div>
+
+      <h2 class="sec">결제 방법</h2>
+      <div class="paybox">
+        <label class="toggle"><input type="checkbox" name="bankOn"> 🏦 계좌이체 받기</label>
+        <div class="grid3">
+          <label>은행<input name="bank" placeholder="예) 기업은행"></label>
+          <label>계좌번호<input name="account"></label>
+          <label>예금주<input name="holder" placeholder="예) 그릿마인드랩"></label>
+        </div>
+        <label>입금 안내 문구<input name="bankNote" placeholder="예) 신청 후 3일 이내 입금 부탁드립니다."></label>
+      </div>
+      <div class="paybox">
+        <label class="toggle"><input type="checkbox" name="cardOn"> 💳 카드결제 받기</label>
+        <label>카드결제 링크 (URL)<input name="cardUrl" type="url" placeholder="https://..."></label>
+      </div>
+
+      <label>환불 규정 <span class="muted small">(비워두면 기본 환불 규정이 표시됩니다)</span><textarea name="refundPolicy" rows="5"></textarea></label>
+      <label>상태
+        <select name="status"><option value="open">모집중 (신청 받기)</option><option value="closed">마감 (신청 막기)</option></select>
+      </label>
+      <p class="err" id="editErr"></p>
+      <div class="acts"><button class="btn sm" type="submit">저장</button><button class="btn sm ghost" type="button" id="cancelEdit">취소</button></div>
+    </form>
+
+    <!-- 신청자 관리 -->
+    <section id="pApps" class="hidden">
+      <div class="toolbar">
+        <select id="appLec"></select>
+        <select id="appFilter">
+          <option value="">전체 상태</option><option value="pending">결제대기</option><option value="paid">결제완료</option><option value="cancel">취소/환불</option>
+        </select>
+        <select id="appReceipt">
+          <option value="">증빙 전체</option><option value="need">증빙 미발급</option><option value="done">증빙 발급완료</option>
+        </select>
+        <button class="btn sm ghost" id="csv">엑셀(CSV) 다운로드</button>
+      </div>
+      <div class="summary" id="summary"></div>
+      <div class="tblwrap"><table id="appTable"></table></div>
+    </section>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, getDocs, query, where, orderBy, onSnapshot, serverTimestamp, increment }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { firebaseConfig, ADMIN_EMAILS, SITE, DEFAULT_CARD_URL, DEFAULT_REFUND, priceOf } from "./firebase-config.js";
+
+const fb = initializeApp(firebaseConfig);
+const auth = getAuth(fb), db = getFirestore(fb);
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const won = n => Number(n || 0).toLocaleString("ko-KR") + "원";
+const FORMAT = { offline: "오프라인", online: "온라인", hybrid: "병행" };
+const STATUS = { pending: "결제대기", paid: "결제완료", cancel: "취소/환불" };
+const PAY = { bank: "계좌이체", card: "카드결제", free: "무료" };
+const RTYPE = { none: "-", cash_personal: "현금영수증(소득공제)", cash_business: "현금영수증(지출증빙)", tax_invoice: "세금계산서" };
+const toast = m => { const t = $("#toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 1800); };
+const base = location.href.replace(/admin\.html.*$/, "").replace(/[?#].*$/, "");
+const linkOf = id => `${base}index.html?id=${id}`;
+
+$("#brand").textContent = `${SITE.name} 강의 신청 관리자`;
+let lectures = [], apps = [], unsubApps = null;
+
+/* ---------- 로그인 ---------- */
+onAuthStateChanged(auth, u => {
+  if (u && !ADMIN_EMAILS.includes(u.email)) {
+    $("#loginErr").textContent = `${u.email} 은(는) 관리자 계정이 아닙니다.`;
+    signOut(auth); return;
+  }
+  $("#loginForm").classList.toggle("hidden", !!u);
+  $("#adminApp").classList.toggle("hidden", !u);
+  $("#logout").classList.toggle("hidden", !u);
+  if (u) loadLectures();
+});
+$("#googleLogin").onclick = async () => {
+  $("#loginErr").textContent = "";
+  try { await signInWithPopup(auth, new GoogleAuthProvider()); }
+  catch (e) { if (e.code !== "auth/popup-closed-by-user") $("#loginErr").textContent = "로그인 실패: " + e.code; }
+};
+$("#logout").onclick = () => signOut(auth);
+
+/* ---------- 탭 ---------- */
+function showTab(t) {
+  $$(".tab").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
+  $("#pList").classList.toggle("hidden", t !== "list");
+  $("#pEdit").classList.toggle("hidden", t !== "edit");
+  $("#pApps").classList.toggle("hidden", t !== "apps");
+  if (t === "apps") loadApps();
+}
+$$(".tab").forEach(b => b.onclick = () => { if (b.dataset.tab === "edit") openEdit(); else showTab(b.dataset.tab); });
+
+/* ---------- 강의 목록 ---------- */
+function loadLectures() {
+  onSnapshot(collection(db, "lectures"), snap => {
+    lectures = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+    renderList(); fillLecSelect();
+  });
+}
+function renderList() {
+  if (!lectures.length) { $("#pList").innerHTML = `<div class="card empty">등록된 강의가 없습니다. ‘+ 새 강의 등록’을 눌러 시작하세요.</div>`; return; }
+  $("#pList").innerHTML = lectures.map(l => `
+    <div class="card">
+      <div class="lec-row">
+        <div>
+          <div class="badges">
+            ${l.status === "open" ? `<span class="badge green">모집중</span>` : `<span class="badge red">마감</span>`}
+            <span class="badge">${FORMAT[l.format] || ""}</span>
+            ${l.payBank?.enabled ? `<span class="badge gray">계좌</span>` : ""}${l.payCard?.enabled ? `<span class="badge gray">카드</span>` : ""}
+          </div>
+          <h3>${esc(l.title)}</h3>
+          <div class="muted small">${esc(l.schedule).replace(/\n/g, " / ")}</div>
+          <div class="stat"><span>수강료 ${(() => { const P = priceOf(l); return P.active ? `<s class="muted">${won(P.fee)}</s> <b>${P.final ? won(P.final) : "무료"}</b> <span class="badge amber">${esc(P.label)} ${P.text}${P.until ? ` ~${P.until.slice(5)}` : ""}</span>` : `<b>${P.fee ? won(P.fee) : "무료"}</b>`; })()}</span>
+            ${l.discount?.type && l.discount.type !== "none" && !priceOf(l).active ? `<span class="badge gray">할인 종료</span>` : ""}<span>신청 <b>${l.applicantCount || 0}</b>${l.capacity > 0 ? ` / ${l.capacity}명` : "명"}</span>${l.deadline ? `<span>마감 ${esc(l.deadline)}</span>` : ""}</div>
+        </div>
+        <div class="acts">
+          <button class="btn sm" data-a="copy" data-id="${l.id}">🔗 신청 링크 복사</button>
+          <a class="btn sm ghost" href="${linkOf(l.id)}" target="_blank">미리보기</a>
+          <button class="btn sm ghost" data-a="apps" data-id="${l.id}">신청자</button>
+          <button class="btn sm ghost" data-a="edit" data-id="${l.id}">수정</button>
+          <button class="btn sm ghost" data-a="dup" data-id="${l.id}">복제</button>
+          <button class="btn sm ghost" data-a="toggle" data-id="${l.id}">${l.status === "open" ? "마감하기" : "다시 열기"}</button>
+          <button class="btn sm danger" data-a="del" data-id="${l.id}">삭제</button>
+        </div>
+      </div>
+    </div>`).join("");
+}
+$("#pList").addEventListener("click", async e => {
+  const b = e.target.closest("[data-a]"); if (!b) return;
+  const l = lectures.find(x => x.id === b.dataset.id);
+  switch (b.dataset.a) {
+    case "copy": await navigator.clipboard.writeText(linkOf(l.id)); toast("신청 링크를 복사했어요"); break;
+    case "apps": $("#appLec").value = l.id; showTab("apps"); break;
+    case "edit": openEdit(l); break;
+    case "dup": { const { id, createdAt, applicantCount, ...rest } = l; openEdit({ ...rest, title: rest.title + " (복사본)" }, true); break; }
+    case "toggle": await updateDoc(doc(db, "lectures", l.id), { status: l.status === "open" ? "closed" : "open" }); break;
+    case "del":
+      if ((l.applicantCount || 0) > 0 && !confirm(`신청자가 ${l.applicantCount}명 있습니다. 강의만 삭제되고 신청자 기록은 남습니다. 삭제할까요?`)) return;
+      if (!(l.applicantCount > 0) && !confirm("이 강의를 삭제할까요?")) return;
+      await deleteDoc(doc(db, "lectures", l.id)); toast("삭제했어요"); break;
+  }
+});
+
+/* ---------- 강의 등록/수정 ---------- */
+const F = $("#pEdit");
+function openEdit(l = null, isCopy = false) {
+  F.reset();
+  F.id.value = isCopy || !l ? "" : l.id;
+  $("#editTitle").textContent = l && !isCopy ? "강의 수정" : "새 강의 등록";
+  if (l) {
+    ["title","description","schedule","dateStart","format","totalHours","fee","location","capacity","deadline","benefits","refundPolicy","status"]
+      .forEach(k => { if (F[k] && l[k] != null) F[k].value = l[k]; });
+    F.bankOn.checked = !!l.payBank?.enabled; F.bank.value = l.payBank?.bank || ""; F.account.value = l.payBank?.account || "";
+    F.holder.value = l.payBank?.holder || ""; F.bankNote.value = l.payBank?.note || "";
+    F.cardOn.checked = !!l.payCard?.enabled; F.cardUrl.value = l.payCard?.url || "";
+    F.discType.value = l.discount?.type || "none"; F.discValue.value = l.discount?.value || 0;
+    F.discLabel.value = l.discount?.label || ""; F.discUntil.value = l.discount?.until || "";
+  } else {
+    F.cardOn.checked = true; F.cardUrl.value = DEFAULT_CARD_URL; F.refundPolicy.value = DEFAULT_REFUND;
+    // 지난번 입력한 계좌 정보 자동 채우기
+    const last = lectures.find(x => x.payBank?.account);
+    if (last) { F.bank.value = last.payBank.bank; F.account.value = last.payBank.account; F.holder.value = last.payBank.holder; F.bankNote.value = last.payBank.note || ""; }
+  }
+  $("#editErr").textContent = "";
+  if (F.cardOn.checked && !F.cardUrl.value) F.cardUrl.value = DEFAULT_CARD_URL;
+  discPreview();
+  showTab("edit"); window.scrollTo(0, 0);
+}
+function discPreview() {
+  const t = F.discType.value;
+  F.discValue.disabled = t === "none";
+  F.discValue.max = t === "percent" ? 90 : "";
+  F.discValue.step = t === "percent" ? 1 : 1000;
+  $("#discValLbl").firstChild.textContent = t === "percent" ? "할인율 (0~90%)" : t === "amount" ? "할인 금액 (원)" : "할인 값";
+  const P = priceOf({ fee: F.fee.value, discount: { type: t, value: F.discValue.value, label: F.discLabel.value } });
+  $("#discPreview").innerHTML = t === "none" || !P.active
+    ? `신청자에게 보이는 수강료: <b>${P.fee ? won(P.fee) : "무료"}</b>`
+    : `신청자에게 보이는 수강료: <s>${won(P.fee)}</s> → <b style="color:var(--red)">${P.final ? won(P.final) : "무료"}</b> (${esc(P.label)} ${P.text}${F.discUntil.value ? `, ${F.discUntil.value}까지` : ""})`;
+}
+["fee", "discType", "discValue", "discLabel", "discUntil"].forEach(k => F[k].addEventListener("input", discPreview));
+$("#cancelEdit").onclick = () => showTab("list");
+F.addEventListener("submit", async e => {
+  e.preventDefault();
+  const v = k => F[k].value.trim();
+  const err = m => $("#editErr").textContent = m;
+  err("");
+  if (!v("title") || !v("schedule")) return err("강의명과 일정은 필수입니다.");
+  const fee = Number(v("fee") || 0);
+  if (fee > 0 && !F.bankOn.checked && !F.cardOn.checked) return err("유료 강의는 결제 방법을 하나 이상 선택해주세요.");
+  if (F.bankOn.checked && (!v("bank") || !v("account") || !v("holder"))) return err("계좌이체 정보(은행·계좌번호·예금주)를 모두 입력해주세요.");
+  if (F.cardOn.checked && !/^https?:\/\//.test(v("cardUrl"))) return err("카드결제 링크를 https:// 로 시작하는 주소로 입력해주세요.");
+
+  const dType = F.discType.value, dVal = Number(v("discValue") || 0);
+  if (dType === "percent" && (dVal < 0 || dVal > 90)) return err("할인율은 0~90% 사이로 입력해주세요.");
+  if (dType === "amount" && (dVal < 0 || dVal > fee)) return err("정액 할인은 수강료보다 클 수 없습니다.");
+  const data = {
+    title: v("title"), description: v("description"), schedule: v("schedule"), dateStart: v("dateStart"),
+    format: F.format.value, totalHours: v("totalHours"), fee, location: v("location"),
+    capacity: Number(v("capacity") || 0), deadline: v("deadline"), benefits: v("benefits"),
+    refundPolicy: v("refundPolicy"), status: F.status.value,
+    payBank: { enabled: F.bankOn.checked, bank: v("bank"), account: v("account"), holder: v("holder"), note: v("bankNote") },
+    payCard: { enabled: F.cardOn.checked, url: v("cardUrl") },
+    discount: { type: dType, value: dType === "none" ? 0 : dVal, label: v("discLabel"), until: v("discUntil") },
+    updatedAt: serverTimestamp()
+  };
+  try {
+    if (v("id")) await updateDoc(doc(db, "lectures", v("id")), data);
+    else await addDoc(collection(db, "lectures"), { ...data, applicantCount: 0, createdAt: serverTimestamp() });
+    toast("저장했어요"); showTab("list");
+  } catch (ex) { console.error(ex); err("저장 실패: 권한 또는 네트워크를 확인해주세요."); }
+});
+
+/* ---------- 신청자 관리 ---------- */
+function fillLecSelect() {
+  const cur = $("#appLec").value;
+  $("#appLec").innerHTML = `<option value="">전체 강의</option>` + lectures.map(l => `<option value="${l.id}">${esc(l.title)}</option>`).join("");
+  $("#appLec").value = cur;
+}
+function loadApps() {
+  if (unsubApps) unsubApps();
+  const lid = $("#appLec").value;
+  const q = lid ? query(collection(db, "applications"), where("lectureId", "==", lid)) : collection(db, "applications");
+  unsubApps = onSnapshot(q, snap => {
+    apps = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+    renderApps();
+  });
+}
+["#appLec"].forEach(s => $(s).onchange = loadApps);
+["#appFilter", "#appReceipt"].forEach(s => $(s).onchange = renderApps);
+
+function filtered() {
+  const st = $("#appFilter").value, rc = $("#appReceipt").value;
+  return apps.filter(a => (!st || a.status === st) &&
+    (!rc || (a.receipt?.type !== "none" && (rc === "done" ? a.receiptIssued : !a.receiptIssued))));
+}
+const dt = ts => ts?.toDate ? ts.toDate().toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+function receiptText(r) {
+  if (!r || r.type === "none") return "-";
+  let s = `<b>${RTYPE[r.type]}</b><br>${esc(r.number)}`;
+  if (r.bizName) s += `<br>${esc(r.bizName)}`;
+  if (r.type === "tax_invoice") s += `<br><span class="sm">대표 ${esc(r.ceo)} · ${esc(r.invoiceEmail)}${r.bizType ? "<br>" + esc(r.bizType) : ""}</span>`;
+  return s;
+}
+function renderApps() {
+  const list = filtered();
+  const paid = apps.filter(a => a.status === "paid");
+  const needR = apps.filter(a => a.receipt?.type && a.receipt.type !== "none" && !a.receiptIssued && a.status !== "cancel");
+  $("#summary").innerHTML = `
+    <div>전체 신청<b>${apps.filter(a => a.status !== "cancel").length}명</b></div>
+    <div>결제대기<b>${apps.filter(a => a.status === "pending").length}명</b></div>
+    <div>결제완료<b>${paid.length}명</b></div>
+    <div>결제완료 금액<b>${won(paid.reduce((s, a) => s + (a.fee || 0), 0))}</b></div>
+    <div>증빙 발급 대기<b style="color:var(--amber)">${needR.length}건</b></div>`;
+  if (!list.length) { $("#appTable").innerHTML = `<tr><td class="empty">신청자가 없습니다.</td></tr>`; return; }
+  const showLec = !$("#appLec").value;
+  $("#appTable").innerHTML = `
+    <tr><th>#</th>${showLec ? "<th>강의</th>" : ""}<th>신청일</th><th>이름</th><th>연락처 / 이메일</th><th>소속</th><th>결제</th><th>입금자명</th><th>상태</th><th>증빙 요청</th><th>증빙 발급</th><th>메모</th><th></th></tr>` +
+    list.map((a, i) => `
+    <tr>
+      <td>${list.length - i}</td>
+      ${showLec ? `<td>${esc(a.lectureTitle)}</td>` : ""}
+      <td class="sm">${dt(a.createdAt)}</td>
+      <td><b>${esc(a.name)}</b></td>
+      <td>${esc(a.phone)}<br><span class="sm">${esc(a.email)}</span></td>
+      <td>${esc(a.org)}</td>
+      <td>${PAY[a.payMethod] || ""}<br><span class="sm">${won(a.fee)}${a.discountLabel ? `<br>(${esc(a.discountLabel)})` : ""}</span></td>
+      <td>${esc(a.depositor)}</td>
+      <td><select data-st="${a.id}">${Object.entries(STATUS).map(([k, t]) => `<option value="${k}" ${a.status === k ? "selected" : ""}>${t}</option>`).join("")}</select></td>
+      <td>${receiptText(a.receipt)}</td>
+      <td>${a.receipt?.type && a.receipt.type !== "none" ? `<label class="chk"><input type="checkbox" data-rc="${a.id}" ${a.receiptIssued ? "checked" : ""}> 발급완료</label>` : "-"}</td>
+      <td class="sm">${esc(a.memo)}</td>
+      <td><button class="mini" data-del="${a.id}">삭제</button></td>
+    </tr>`).join("");
+}
+$("#appTable").addEventListener("change", async e => {
+  const t = e.target;
+  if (t.dataset.st) {
+    const a = apps.find(x => x.id === t.dataset.st), was = a.status, now = t.value;
+    await updateDoc(doc(db, "applications", a.id), { status: now, statusAt: serverTimestamp() });
+    // 취소 ↔ 복구 시 정원 카운트 조정
+    if (was !== "cancel" && now === "cancel") await updateDoc(doc(db, "lectures", a.lectureId), { applicantCount: increment(-1) }).catch(() => {});
+    if (was === "cancel" && now !== "cancel") await updateDoc(doc(db, "lectures", a.lectureId), { applicantCount: increment(1) }).catch(() => {});
+    toast(`${a.name} → ${STATUS[now]}`);
+  }
+  if (t.dataset.rc) await updateDoc(doc(db, "applications", t.dataset.rc), { receiptIssued: t.checked });
+});
+$("#appTable").addEventListener("click", async e => {
+  const id = e.target.dataset.del; if (!id) return;
+  const a = apps.find(x => x.id === id);
+  if (!confirm(`${a.name}님의 신청을 삭제할까요? (복구 불가)`)) return;
+  await deleteDoc(doc(db, "applications", id));
+  if (a.status !== "cancel") await updateDoc(doc(db, "lectures", a.lectureId), { applicantCount: increment(-1) }).catch(() => {});
+  toast("삭제했어요");
+});
+
+/* ---------- CSV ---------- */
+$("#csv").onclick = () => {
+  const head = ["강의명","신청일시","이름","연락처","이메일","소속","결제방법","정가","결제금액","적용할인","입금자명","상태","증빙종류","발급번호(휴대폰/사업자번호)","상호","대표자","세금계산서 이메일","업태/종목","증빙발급","메모"];
+  const rows = filtered().map(a => [
+    a.lectureTitle, a.createdAt?.toDate?.().toLocaleString("ko-KR") || "", a.name, a.phone, a.email, a.org,
+    PAY[a.payMethod] || "", a.originalFee ?? a.fee, a.fee, a.discountLabel || "", a.depositor, STATUS[a.status], RTYPE[a.receipt?.type] || "-",
+    a.receipt?.number || "", a.receipt?.bizName || "", a.receipt?.ceo || "", a.receipt?.invoiceEmail || "", a.receipt?.bizType || "",
+    a.receipt?.type && a.receipt.type !== "none" ? (a.receiptIssued ? "발급완료" : "미발급") : "", a.memo
+  ]);
+  const csv = [head, ...rows].map(r => r.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  const lec = lectures.find(l => l.id === $("#appLec").value);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" }));
+  a.download = `신청자명단_${lec ? lec.title : "전체"}_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+};
+</script>
+</body>
+</html>

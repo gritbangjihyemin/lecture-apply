@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>강의 신청</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top"><div class="wrap"><span id="siteName" class="brand">강의 신청</span></div></header>
+
+<main class="wrap" id="app">
+  <div class="loading">불러오는 중…</div>
+</main>
+
+<footer class="foot wrap" id="foot"></footer>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, doc, getDoc, collection, query, where, getDocs, runTransaction, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { firebaseConfig, SITE, DEFAULT_REFUND, priceOf } from "./firebase-config.js";
+
+const db = getFirestore(initializeApp(firebaseConfig));
+const $ = s => document.querySelector(s);
+const app = $("#app");
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const nl = s => esc(s).replace(/\n/g, "<br>");
+const won = n => Number(n || 0) === 0 ? "무료" : Number(n).toLocaleString("ko-KR") + "원";
+const priceHtml = P => P.active
+  ? `<span class="strike">${won(P.fee)}</span> <b class="final">${won(P.final)}</b> <span class="badge amber">${esc(P.label)} ${P.text}</span>`
+  : `<b>${won(P.fee)}</b>`;
+const FORMAT = { offline: "오프라인", online: "온라인", hybrid: "온·오프라인 병행" };
+
+$("#siteName").textContent = `${SITE.name} ${SITE.title}`;
+$("#foot").textContent = SITE.contact;
+
+const id = new URLSearchParams(location.search).get("id");
+id ? showLecture(id) : showList();
+
+/* ---------- 강의 목록 (id 없이 접속 시) ---------- */
+async function showList() {
+  document.title = `${SITE.title} | ${SITE.name}`;
+  const snap = await getDocs(query(collection(db, "lectures"), where("status", "==", "open")));
+  const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (a.dateStart || "").localeCompare(b.dateStart || ""));
+  if (!list.length) { app.innerHTML = `<div class="card empty">현재 모집 중인 강의가 없습니다.</div>`; return; }
+  app.innerHTML = `<h1 class="pagetitle">모집 중인 강의</h1>` + list.map(l => `
+    <a class="card lec-item" href="?id=${l.id}">
+      <div class="badges"><span class="badge">${FORMAT[l.format] || ""}</span>${l.totalHours ? `<span class="badge gray">총 ${esc(l.totalHours)}</span>` : ""}</div>
+      <h2>${esc(l.title)}</h2>
+      <p class="muted">${esc(l.schedule)}</p>
+      <p class="price">${priceHtml(priceOf(l))}</p>
+    </a>`).join("");
+}
+
+/* ---------- 강의 상세 + 신청서 ---------- */
+async function showLecture(id) {
+  const snap = await getDoc(doc(db, "lectures", id));
+  if (!snap.exists()) { app.innerHTML = `<div class="card empty">존재하지 않는 강의입니다. 링크를 다시 확인해주세요.</div>`; return; }
+  const L = snap.data();
+  document.title = `${L.title} | ${SITE.name}`;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const full = L.capacity > 0 && (L.applicantCount || 0) >= L.capacity;
+  const pastDeadline = L.deadline && today > L.deadline;
+  const closed = L.status !== "open" || full || pastDeadline;
+  const closedMsg = full ? "정원이 마감되었습니다." : pastDeadline ? "신청 기간이 종료되었습니다." : "현재 신청을 받지 않는 강의입니다.";
+
+  const bank = L.payBank?.enabled, card = L.payCard?.enabled && L.payCard?.url;
+  const P = priceOf(L);
+  const free = P.final === 0;
+  const remain = L.capacity > 0 ? Math.max(0, L.capacity - (L.applicantCount || 0)) : null;
+
+  const rows = [
+    ["일정", nl(L.schedule)],
+    ["총 시간", esc(L.totalHours)],
+    ["진행 방식", FORMAT[L.format] || ""],
+    [L.format === "online" ? "접속 방법" : "장소", nl(L.location)],
+    ["수강료", priceHtml(P) + (P.active && P.until ? `<div class="small muted">할인 적용: ${esc(P.until)}까지 신청 시</div>` : "")],
+    ["정원", L.capacity > 0 ? `${L.capacity}명 (잔여 ${remain}명)` : ""],
+    ["신청 마감", esc(L.deadline)],
+  ].filter(r => r[1]);
+
+  app.innerHTML = `
+  <section class="card hero">
+    <div class="badges"><span class="badge">${FORMAT[L.format] || ""}</span>${closed ? `<span class="badge red">신청마감</span>` : `<span class="badge green">모집중</span>`}</div>
+    <h1>${esc(L.title)}</h1>
+    ${L.description ? `<p class="desc">${nl(L.description)}</p>` : ""}
+    <dl class="info">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
+    ${L.benefits ? `<div class="benefit"><div class="benefit-t">🎁 수강 특전</div>${nl(L.benefits)}</div>` : ""}
+    ${(L.refundPolicy || DEFAULT_REFUND) ? `<details class="refund"><summary>환불 규정</summary><p>${nl(L.refundPolicy || DEFAULT_REFUND)}</p></details>` : ""}
+  </section>
+
+  ${closed ? `<div class="card empty">${closedMsg}</div>` : `
+  <form class="card" id="f" novalidate>
+    <h2 class="sec">신청서 작성</h2>
+    <label>이름 <i>*</i><input name="name" required maxlength="30" autocomplete="name"></label>
+    <label>연락처 <i>*</i><input name="phone" required inputmode="numeric" placeholder="010-0000-0000" maxlength="13"></label>
+    <label>이메일 <i>*</i><input name="email" type="email" required placeholder="example@email.com"></label>
+    <label>소속 (학교·회사 등)<input name="org" maxlength="60"></label>
+
+    ${free ? "" : `
+    <h2 class="sec">결제 방법</h2>
+    <div class="paysel">
+      ${bank ? `<label class="opt"><input type="radio" name="payMethod" value="bank" ${!card ? "checked" : ""}><span>🏦 계좌이체</span></label>` : ""}
+      ${card ? `<label class="opt"><input type="radio" name="payMethod" value="card" ${!bank ? "checked" : ""}><span>💳 카드결제</span></label>` : ""}
+    </div>
+
+    <div id="bankBox" class="sub hidden">
+      <div class="account">
+        <div><span class="muted">입금 계좌</span><b>${esc(L.payBank?.bank)} ${esc(L.payBank?.account)}</b><button type="button" class="mini" id="copyAcc">복사</button></div>
+        <div><span class="muted">예금주</span>${esc(L.payBank?.holder)}</div>
+        <div><span class="muted">입금액</span><b>${won(P.final)}</b></div>
+        ${L.payBank?.note ? `<div class="muted small">${nl(L.payBank.note)}</div>` : ""}
+      </div>
+      <label>입금자명 <i>*</i><input name="depositor" maxlength="30" placeholder="신청자명과 다를 경우 꼭 입력"></label>
+
+      <div class="lbl">증빙 서류</div>
+      <div class="receipt-opts">
+        <label class="opt"><input type="radio" name="rtype" value="none" checked><span>필요 없음</span></label>
+        <label class="opt"><input type="radio" name="rtype" value="cash_personal"><span>현금영수증<br><small>개인 소득공제용</small></span></label>
+        <label class="opt"><input type="radio" name="rtype" value="cash_business"><span>현금영수증<br><small>사업자 지출증빙용</small></span></label>
+        <label class="opt"><input type="radio" name="rtype" value="tax_invoice"><span>세금계산서<br><small>기관·법인</small></span></label>
+      </div>
+      <div id="rPersonal" class="rbox hidden">
+        <label>현금영수증 발급 휴대폰번호 <i>*</i><input name="cashPhone" inputmode="numeric" placeholder="010-0000-0000" maxlength="13"></label>
+      </div>
+      <div id="rBiz" class="rbox hidden">
+        <label>사업자등록번호 <i>*</i><input name="bizNo" inputmode="numeric" placeholder="000-00-00000" maxlength="12"></label>
+        <label>상호(기관명) <i>*</i><input name="bizName" maxlength="60"></label>
+        <div id="rTax" class="hidden">
+          <label>대표자명 <i>*</i><input name="ceo" maxlength="30"></label>
+          <label>세금계산서 수신 이메일 <i>*</i><input name="invoiceEmail" type="email"></label>
+          <label>업태 / 종목<input name="bizType" maxlength="60" placeholder="예) 교육서비스 / 대학교"></label>
+        </div>
+      </div>
+    </div>
+
+    <div id="cardBox" class="sub hidden">
+      <p class="muted">신청서를 제출하면 <b>카드결제 페이지 바로가기</b> 버튼이 나타납니다. 결제까지 완료해야 신청이 확정됩니다.</p>
+    </div>`}
+
+    <label>남기실 말씀<textarea name="memo" rows="3" maxlength="500"></textarea></label>
+
+    <div class="agree">
+      <label class="chk"><input type="checkbox" name="agree"> <span><b>[필수]</b> 개인정보 수집·이용에 동의합니다.</span></label>
+      <details><summary>내용 보기</summary>
+        <p>· 수집 항목: 이름, 연락처, 이메일, 소속, (해당 시) 입금자명·현금영수증 발급번호·사업자 정보<br>
+        · 이용 목적: 강의 신청 접수, 수강 안내, 결제 확인 및 증빙 발급<br>
+        · 보유 기간: 강의 종료 후 1년 (세법상 보관 의무가 있는 결제·증빙 정보는 관련 법령에 따른 기간)<br>
+        · 동의를 거부할 수 있으나, 거부 시 신청이 제한됩니다.</p>
+      </details>
+    </div>
+
+    <p class="err" id="err"></p>
+    <button class="btn" id="submitBtn">신청하기</button>
+  </form>`}`;
+
+  if (closed) return;
+  const f = $("#f");
+
+  // 결제수단/증빙 토글
+  const sync = () => {
+    const pm = f.payMethod?.value || (f.querySelector('[name=payMethod]:checked')?.value);
+    $("#bankBox")?.classList.toggle("hidden", pm !== "bank");
+    $("#cardBox")?.classList.toggle("hidden", pm !== "card");
+    const rt = f.querySelector('[name=rtype]:checked')?.value;
+    $("#rPersonal")?.classList.toggle("hidden", rt !== "cash_personal");
+    $("#rBiz")?.classList.toggle("hidden", !(rt === "cash_business" || rt === "tax_invoice"));
+    $("#rTax")?.classList.toggle("hidden", rt !== "tax_invoice");
+  };
+  f.addEventListener("change", sync); sync();
+
+  // 자동 하이픈
+  const fmtPhone = v => v.replace(/\D/g, "").slice(0, 11).replace(/^(\d{3})(\d{3,4})(\d{0,4}).*/, (m, a, b, c) => c ? `${a}-${b}-${c}` : `${a}-${b}`);
+  const fmtBiz = v => { const d = v.replace(/\D/g, "").slice(0, 10); return d.length > 5 ? `${d.slice(0,3)}-${d.slice(3,5)}-${d.slice(5)}` : d.length > 3 ? `${d.slice(0,3)}-${d.slice(3)}` : d; };
+  ["phone", "cashPhone"].forEach(n => f[n]?.addEventListener("input", e => e.target.value = fmtPhone(e.target.value)));
+  f.bizNo?.addEventListener("input", e => e.target.value = fmtBiz(e.target.value));
+  f.phone.addEventListener("blur", () => { if (f.cashPhone && !f.cashPhone.value) f.cashPhone.value = f.phone.value; });
+  f.name.addEventListener("blur", () => { if (f.depositor && !f.depositor.value) f.depositor.value = f.name.value; });
+
+  $("#copyAcc")?.addEventListener("click", () => {
+    navigator.clipboard.writeText(`${L.payBank.bank} ${L.payBank.account}`.trim());
+    $("#copyAcc").textContent = "복사됨";
+  });
+
+  f.addEventListener("submit", async e => {
+    e.preventDefault();
+    const v = n => (f[n]?.value || "").trim();
+    const err = m => { $("#err").textContent = m; return false; };
+    const pm = free ? "free" : f.querySelector('[name=payMethod]:checked')?.value;
+    const rt = pm === "bank" ? f.querySelector('[name=rtype]:checked')?.value : "none";
+
+    if (!v("name")) return err("이름을 입력해주세요.");
+    if (!/^01\d-\d{3,4}-\d{4}$/.test(v("phone"))) return err("연락처를 정확히 입력해주세요.");
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v("email"))) return err("이메일을 정확히 입력해주세요.");
+    if (!pm) return err("결제 방법을 선택해주세요.");
+    if (pm === "bank" && !v("depositor")) return err("입금자명을 입력해주세요.");
+    if (rt === "cash_personal" && !/^01\d-\d{3,4}-\d{4}$/.test(v("cashPhone"))) return err("현금영수증 발급 휴대폰번호를 확인해주세요.");
+    if ((rt === "cash_business" || rt === "tax_invoice") && !/^\d{3}-\d{2}-\d{5}$/.test(v("bizNo"))) return err("사업자등록번호 10자리를 확인해주세요.");
+    if ((rt === "cash_business" || rt === "tax_invoice") && !v("bizName")) return err("상호(기관명)를 입력해주세요.");
+    if (rt === "tax_invoice" && (!v("ceo") || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v("invoiceEmail")))) return err("세금계산서 대표자명과 수신 이메일을 확인해주세요.");
+    if (!f.agree.checked) return err("개인정보 수집·이용에 동의해주세요.");
+    err("");
+
+    const receipt = { type: rt };
+    if (rt === "cash_personal") receipt.number = v("cashPhone");
+    if (rt === "cash_business" || rt === "tax_invoice") Object.assign(receipt, { number: v("bizNo"), bizName: v("bizName") });
+    if (rt === "tax_invoice") Object.assign(receipt, { ceo: v("ceo"), invoiceEmail: v("invoiceEmail"), bizType: v("bizType") });
+
+    const btn = $("#submitBtn"); btn.disabled = true; btn.textContent = "제출 중…";
+    try {
+      const lecRef = doc(db, "lectures", id);
+      const appRef = doc(collection(db, "applications"));
+      await runTransaction(db, async tx => {
+        const cur = await tx.get(lecRef);
+        const c = cur.data().applicantCount || 0;
+        if (cur.data().status !== "open") throw new Error("closed");
+        if (cur.data().capacity > 0 && c >= cur.data().capacity) throw new Error("full");
+        tx.set(appRef, {
+          lectureId: id, lectureTitle: L.title, fee: P.final, originalFee: P.fee, discountLabel: P.active ? `${P.label} ${P.text}` : "",
+          name: v("name"), phone: v("phone"), email: v("email"), org: v("org"),
+          payMethod: pm, depositor: pm === "bank" ? v("depositor") : "",
+          receipt, memo: v("memo"), agree: true,
+          status: "pending", receiptIssued: false, createdAt: serverTimestamp()
+        });
+        tx.update(lecRef, { applicantCount: c + 1 });
+      });
+      done(L, pm, v("name"), P);
+    } catch (ex) {
+      console.error(ex);
+      btn.disabled = false; btn.textContent = "신청하기";
+      err(ex.message === "full" ? "정원이 마감되었습니다." : ex.message === "closed" ? "신청이 마감되었습니다." : "제출 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+    }
+  });
+}
+
+/* ---------- 신청 완료 ---------- */
+function done(L, pm, name, P) {
+  window.scrollTo(0, 0);
+  app.innerHTML = `
+  <section class="card done">
+    <div class="check">✓</div>
+    <h1>${esc(name)}님, 신청서가 접수되었습니다</h1>
+    <p class="muted">${esc(L.title)}</p>
+    ${pm === "bank" ? `
+      <div class="account left">
+        <div class="benefit-t">아래 계좌로 입금해주시면 확인 후 신청이 확정됩니다.</div>
+        <div><span class="muted">입금 계좌</span><b>${esc(L.payBank.bank)} ${esc(L.payBank.account)}</b></div>
+        <div><span class="muted">예금주</span>${esc(L.payBank.holder)}</div>
+        <div><span class="muted">입금액</span><b>${won(P.final)}</b></div>
+        ${L.payBank.note ? `<div class="muted small">${nl(L.payBank.note)}</div>` : ""}
+      </div>` : ""}
+    ${pm === "card" ? `
+      <p>결제 금액 <b>${won(P.final)}</b><br>아래 버튼을 눌러 카드결제를 완료해주세요.<br><b>결제까지 완료되어야 신청이 확정됩니다.</b></p>
+      <a class="btn" href="${esc(L.payCard.url)}" target="_blank" rel="noopener">💳 카드결제 페이지 바로가기</a>` : ""}
+    ${pm === "free" ? `<p>수강 안내는 입력하신 연락처로 보내드립니다.</p>` : ""}
+  </section>`;
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ▼ 관리자 로그인 이메일로 바꿔주세요 (여러 개면 쉼표로 추가)
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email in ['gritbangjihye@gmail.com'];
+    }
+
+    // 강의: 누구나 조회 / 관리자만 작성·수정·삭제
+    // 신청자는 신청 시 applicantCount 를 +1 하는 것만 허용 (정원 초과 차단)
+    match /lectures/{lectureId} {
+      allow read: if true;
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['applicantCount'])
+        && resource.data.status == 'open'
+        && request.resource.data.applicantCount == resource.data.get('applicantCount', 0) + 1
+        && (resource.data.get('capacity', 0) == 0
+            || request.resource.data.applicantCount <= resource.data.capacity)
+      );
+    }
+
+    // 신청서: 누구나 제출만 가능 / 조회·수정·삭제는 관리자만 (개인정보 보호)
+    match /applications/{appId} {
+      allow read, update, delete: if isAdmin();
+      allow create: if
+        request.resource.data.keys().hasOnly(['lectureId','lectureTitle','fee','name','phone','email','org',
+          'payMethod','depositor','receipt','memo','agree','status','receiptIssued','createdAt',
+          'originalFee','discountLabel'])
+        && request.resource.data.lectureId is string
+        && get(/databases/$(database)/documents/lectures/$(request.resource.data.lectureId)).data.status == 'open'
+        && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 30
+        && request.resource.data.phone is string && request.resource.data.phone.size() <= 13
+        && request.resource.data.payMethod in ['bank','card','free']
+        && request.resource.data.agree == true
+        && request.resource.data.status == 'pending'
+        && request.resource.data.receiptIssued == false
+        && request.resource.data.memo.size() <= 500
+        && request.resource.data.createdAt == request.time;
+    }
+  }
+}
