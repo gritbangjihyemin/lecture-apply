@@ -219,9 +219,15 @@ async function showLecture(id) {
   f.phone.addEventListener("blur", () => { if (f.cashPhone && !f.cashPhone.value) f.cashPhone.value = f.phone.value; });
   f.name.addEventListener("blur", () => { if (f.depositor && !f.depositor.value) f.depositor.value = f.name.value; });
 
-  $("#copyAcc")?.addEventListener("click", () => {
-    navigator.clipboard.writeText(`${L.payBank.bank} ${L.payBank.account}`.trim());
-    $("#copyAcc").textContent = "복사됨";
+  $("#copyAcc")?.addEventListener("click", async () => {
+    const t = `${L.payBank.bank} ${L.payBank.account}`.trim();
+    let ok = false;
+    try { await navigator.clipboard.writeText(t); ok = true; }
+    catch {
+      const ta = document.createElement("textarea"); ta.value = t; ta.style.cssText = "position:fixed;opacity:0";
+      document.body.appendChild(ta); ta.select(); try { ok = document.execCommand("copy"); } catch {} ta.remove();
+    }
+    $("#copyAcc").textContent = ok ? "복사됨" : "길게 눌러 복사";
   });
 
   f.addEventListener("submit", async e => {

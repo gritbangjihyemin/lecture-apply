@@ -39,6 +39,9 @@
   .toast.show{opacity:1}
   .sessrow{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
   .sessrow input{width:auto;margin:0}
+  .modal{position:fixed;inset:0;background:rgba(20,24,35,.4);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+  .modal .card{max-width:560px;width:100%;margin:0}
+  #lmInput{font-size:14px;background:#f8f9fc}
 </style>
 </head>
 <body>
@@ -142,6 +145,12 @@
     </section>
   </div>
 </main>
+<div class="modal hidden" id="linkModal"><div class="card">
+  <h2 id="lmTitle">신청 링크</h2>
+  <input id="lmInput" readonly>
+  <p class="small" id="lmMsg" style="margin:8px 0 14px"></p>
+  <div class="acts"><button class="btn sm" id="lmCopy" type="button">링크 복사</button><a class="btn sm ghost" id="lmOpen" target="_blank" rel="noopener">열어보기</a><button class="btn sm ghost" id="lmClose" type="button">닫기</button></div>
+</div></div>
 <div class="toast" id="toast"></div>
 
 <script type="module">
@@ -238,7 +247,7 @@ $("#pList").addEventListener("click", async e => {
   const b = e.target.closest("[data-a]"); if (!b) return;
   const l = lectures.find(x => x.id === b.dataset.id);
   switch (b.dataset.a) {
-    case "copy": await navigator.clipboard.writeText(linkOf(l.id)); toast("신청 링크를 복사했어요"); break;
+    case "copy": showLink(linkOf(l.id), l.title); break;
     case "apps": $("#appLec").value = l.id; showTab("apps"); break;
     case "edit": openEdit(l); break;
     case "dup": { const { id, createdAt, applicantCount, ...rest } = l; openEdit({ ...rest, title: rest.title + " (복사본)" }, true); break; }
@@ -249,6 +258,30 @@ $("#pList").addEventListener("click", async e => {
       await deleteDoc(doc(db, "lectures", l.id)); toast("삭제했어요"); break;
   }
 });
+
+/* ---------- 링크 복사 (자동 복사가 막혀도 링크를 보여줌) ---------- */
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true; } catch {}
+  try {
+    const ta = document.createElement("textarea"); ta.value = t; ta.style.cssText = "position:fixed;opacity:0";
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    const ok = document.execCommand("copy"); ta.remove(); return ok;
+  } catch { return false; }
+}
+async function showLink(url, title) {
+  $("#lmTitle").textContent = `${title} — 신청 링크`;
+  $("#lmInput").value = url; $("#lmOpen").href = url;
+  $("#linkModal").classList.remove("hidden");
+  const ok = await copyText(url);
+  $("#lmInput").select();
+  $("#lmMsg").innerHTML = ok
+    ? `<span style="color:var(--green);font-weight:700">✓ 링크가 복사되었습니다.</span> 카톡·문자에 붙여넣기 하세요.`
+    : `<span style="color:var(--amber);font-weight:700">자동 복사가 막혀 있어요.</span> 위 링크가 선택되어 있으니 <b>Ctrl+C</b>(맥은 ⌘+C)를 눌러 복사하세요.`;
+}
+$("#lmCopy").onclick = async () => { await showLink($("#lmInput").value, $("#lmTitle").textContent.replace(/ — 신청 링크$/, "")); };
+$("#lmInput").onclick = e => e.target.select();
+$("#lmClose").onclick = () => $("#linkModal").classList.add("hidden");
+$("#linkModal").onclick = e => { if (e.target.id === "linkModal") $("#linkModal").classList.add("hidden"); };
 
 /* ---------- 강의 등록/수정 ---------- */
 const F = $("#pEdit");
