@@ -22,6 +22,12 @@ service cloud.firestore {
       );
     }
 
+    // 업체 정보(입금 계좌·문의처): 누구나 조회 / 관리자만 수정
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // 신청서: 누구나 제출만 가능 / 조회·수정·삭제는 관리자만 (개인정보 보호)
     match /applications/{appId} {
       allow read, update, delete: if isAdmin();

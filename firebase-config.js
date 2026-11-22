@@ -29,7 +29,24 @@ export const DEFAULT_REFUND = `· 수강 시작 전: 전액 환불
 · 총 수강시간의 1/2 경과 후: 환불 불가
 · 환불은 요청일로부터 5영업일 이내 처리됩니다.`;
 
-// ▼ 할인가 계산 (신청 페이지·관리자 페이지 공용)
+// ▼ 할인 옵션 1개의 할인가 계산 (마감일 지났거나 값이 0이면 null)
+export function discPrice(fee, d, today = new Date().toISOString().slice(0, 10)) {
+  fee = Number(fee || 0);
+  if (!d || !d.type || d.type === "none" || !(Number(d.value) > 0) || (d.until && today > d.until)) return null;
+  if (d.type === "percent") {
+    const p = Math.min(90, Math.max(0, Number(d.value)));
+    return { final: Math.round(fee * (100 - p) / 100 / 10) * 10, text: `${p}% 할인` };
+  }
+  const amt = Math.min(fee, Number(d.value));
+  return { final: fee - amt, text: `${amt.toLocaleString("ko-KR")}원 할인` };
+}
+// ▼ 강의의 현재 사용 가능한 할인 옵션 목록
+export function discountsOf(L, today) {
+  const list = L.discounts || (L.discount && L.discount.type && L.discount.type !== "none" ? [L.discount] : []);
+  return list.map((d, i) => ({ ...d, i, P: discPrice(L.fee, d, today) })).filter(x => x.P);
+}
+
+// ▼ (이전 버전 호환) 할인가 계산
 //   discount: { type: "none" | "percent" | "amount", value, label, until(YYYY-MM-DD) }
 export function priceOf(L, today = new Date().toISOString().slice(0, 10)) {
   const fee = Number(L.fee || 0);

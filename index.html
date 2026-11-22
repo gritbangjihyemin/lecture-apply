@@ -20,7 +20,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getFirestore, doc, getDoc, collection, query, where, getDocs, runTransaction, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, SITE, DEFAULT_REFUND, priceOf } from "./firebase-config.js";
+import { firebaseConfig, SITE, DEFAULT_REFUND, discountsOf } from "./firebase-config.js";
 
 const db = getFirestore(initializeApp(firebaseConfig));
 const $ = s => document.querySelector(s);
@@ -35,6 +35,8 @@ const FORMAT = { offline: "오프라인", online: "온라인", hybrid: "온·오
 
 $("#siteName").textContent = `${SITE.name} ${SITE.title}`;
 $("#foot").textContent = SITE.contact;
+const companyP = getDoc(doc(db, "settings", "company")).then(s => s.data() || {}).catch(() => ({}));
+companyP.then(C => { if (C.contact) $("#foot").textContent = C.contact; });
 
 const id = new URLSearchParams(location.search).get("id");
 id ? showLecture(id) : showList();
@@ -51,7 +53,7 @@ async function showList() {
       <div class="badges"><span class="badge">${FORMAT[l.format] || ""}</span>${l.totalHours ? `<span class="badge gray">총 ${esc(l.totalHours)}</span>` : ""}</div>
       <h2>${esc(l.title)}</h2>
       <p class="muted">${esc(l.schedule)}</p>
-      <p class="price">${priceHtml(priceOf(l))}</p>
+      <p class="price"><b>${won(l.fee)}</b>${discountsOf(l).length ? ` <span class="badge amber">할인 있음</span>` : ""}</p>
     </a>`).join("");
 }
 
@@ -60,6 +62,9 @@ async function showLecture(id) {
   const snap = await getDoc(doc(db, "lectures", id));
   if (!snap.exists()) { app.innerHTML = `<div class="card empty">존재하지 않는 강의입니다. 링크를 다시 확인해주세요.</div>`; return; }
   const L = snap.data();
+  // 계좌 정보는 항상 '업체 정보'에 저장된 값을 사용
+  const C = await companyP;
+  if (L.payBank?.enabled && C.account) L.payBank = { ...L.payBank, bank: C.bank, account: C.account, holder: C.holder, note: C.note || "" };
   document.title = `${L.title} | ${SITE.name}`;
 
   const today = new Date().toISOString().slice(0, 10);
@@ -69,8 +74,10 @@ async function showLecture(id) {
   const closedMsg = full ? "정원이 마감되었습니다." : pastDeadline ? "신청 기간이 종료되었습니다." : "현재 신청을 받지 않는 강의입니다.";
 
   const bank = L.payBank?.enabled, card = L.payCard?.enabled && L.payCard?.url;
-  const P = priceOf(L);
-  const free = P.final === 0;
+  const D = discountsOf(L);
+  const P = { fee: Number(L.fee || 0), final: Number(L.fee || 0), active: false };
+  const free = P.fee === 0;
+  let sel = {};
   const remain = L.capacity > 0 ? Math.max(0, L.capacity - (L.applicantCount || 0)) : null;
 
   const rows = [
@@ -79,6 +86,7 @@ async function showLecture(id) {
     ["진행 방식", FORMAT[L.format] || ""],
     [L.format === "online" ? "접속 방법" : "장소", nl(L.location)],
     ["수강료", priceHtml(P) + (P.active && P.until ? `<div class="small muted">할인 적용: ${esc(P.until)}까지 신청 시</div>` : "")],
+    ["할인", D.map(d => `<div><span class="badge amber">${esc(d.label || "할인")}</span> ${d.P.text} → <b>${won(d.P.final)}</b>${d.until ? ` <span class="small muted">(${esc(d.until)}까지)</span>` : ""}</div>`).join("")],
     ["정원", L.capacity > 0 ? `${L.capacity}명 (잔여 ${remain}명)` : ""],
     ["신청 마감", esc(L.deadline)],
   ].filter(r => r[1]);
@@ -106,13 +114,22 @@ async function showLecture(id) {
     <div class="paysel">
       ${bank ? `<label class="opt"><input type="radio" name="payMethod" value="bank" ${!card ? "checked" : ""}><span>🏦 계좌이체</span></label>` : ""}
       ${card ? `<label class="opt"><input type="radio" name="payMethod" value="card" ${!bank ? "checked" : ""}><span>💳 카드결제</span></label>` : ""}
+      ${D.length ? `<label class="opt"><input type="radio" name="payMethod" value="disc"><span>🏷️ 할인 신청</span></label>` : ""}
+    </div>
+
+    <div id="discBox" class="sub hidden">
+      <div class="lbl">할인 종류 선택</div>
+      <div class="paysel">${D.map(d => `<label class="opt"><input type="radio" name="disc" value="${d.i}"><span>${esc(d.label || "할인")}<br><small>${d.P.text} · ${won(d.P.final)}</small></span></label>`).join("")}</div>
+      <p class="muted small" id="discNote"></p>
+      <div class="lbl hidden" id="dpayLbl">할인가 결제 방법</div>
+      <div id="dpaySel" class="paysel hidden"></div>
     </div>
 
     <div id="bankBox" class="sub hidden">
       <div class="account">
         <div><span class="muted">입금 계좌</span><b>${esc(L.payBank?.bank)} ${esc(L.payBank?.account)}</b><button type="button" class="mini" id="copyAcc">복사</button></div>
         <div><span class="muted">예금주</span>${esc(L.payBank?.holder)}</div>
-        <div><span class="muted">입금액</span><b>${won(P.final)}</b></div>
+        <div><span class="muted">입금액</span><b id="payAmt">${won(P.final)}</b></div>
         ${L.payBank?.note ? `<div class="muted small">${nl(L.payBank.note)}</div>` : ""}
       </div>
       <label>입금자명 <i>*</i><input name="depositor" maxlength="30" placeholder="신청자명과 다를 경우 꼭 입력"></label>
@@ -163,9 +180,30 @@ async function showLecture(id) {
 
   // 결제수단/증빙 토글
   const sync = () => {
-    const pm = f.payMethod?.value || (f.querySelector('[name=payMethod]:checked')?.value);
-    $("#bankBox")?.classList.toggle("hidden", pm !== "bank");
-    $("#cardBox")?.classList.toggle("hidden", pm !== "card");
+    const pm = f.querySelector('[name=payMethod]:checked')?.value;
+    let eff = pm, d = null;
+    $("#discBox")?.classList.toggle("hidden", pm !== "disc");
+    if (pm === "disc") {
+      const di = f.querySelector('[name=disc]:checked')?.value;
+      d = D.find(x => String(x.i) === di) || null;
+      eff = null;
+      if (d) {
+        $("#discNote").textContent = d.note || "";
+        const opts = [];
+        if (d.P.final > 0) { if (bank) opts.push(["bank", "🏦 계좌이체"]); if (d.cardUrl) opts.push(["card", "💳 카드결제"]); }
+        const box = $("#dpaySel"), key = d.i + ":" + opts.map(o => o[0]).join();
+        if (box.dataset.k !== key) {
+          box.dataset.k = key;
+          box.innerHTML = opts.map(([v, t]) => `<label class="opt"><input type="radio" name="dpay" value="${v}" ${opts.length === 1 ? "checked" : ""}><span>${t}</span></label>`).join("");
+        }
+        box.classList.toggle("hidden", !opts.length); $("#dpayLbl").classList.toggle("hidden", !opts.length);
+        eff = d.P.final === 0 ? "free" : f.querySelector('[name=dpay]:checked')?.value;
+      }
+    }
+    sel = { pm, eff, d, amount: d ? d.P.final : P.fee };
+    if ($("#payAmt")) $("#payAmt").textContent = won(sel.amount);
+    $("#bankBox")?.classList.toggle("hidden", eff !== "bank");
+    $("#cardBox")?.classList.toggle("hidden", eff !== "card");
     const rt = f.querySelector('[name=rtype]:checked')?.value;
     $("#rPersonal")?.classList.toggle("hidden", rt !== "cash_personal");
     $("#rBiz")?.classList.toggle("hidden", !(rt === "cash_business" || rt === "tax_invoice"));
@@ -190,12 +228,14 @@ async function showLecture(id) {
     e.preventDefault();
     const v = n => (f[n]?.value || "").trim();
     const err = m => { $("#err").textContent = m; return false; };
-    const pm = free ? "free" : f.querySelector('[name=payMethod]:checked')?.value;
+    sync();
+    const pm = free ? "free" : sel.eff;
     const rt = pm === "bank" ? f.querySelector('[name=rtype]:checked')?.value : "none";
 
     if (!v("name")) return err("이름을 입력해주세요.");
     if (!/^01\d-\d{3,4}-\d{4}$/.test(v("phone"))) return err("연락처를 정확히 입력해주세요.");
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v("email"))) return err("이메일을 정확히 입력해주세요.");
+    if (!free && sel.pm === "disc" && !sel.d) return err("할인 종류를 선택해주세요.");
     if (!pm) return err("결제 방법을 선택해주세요.");
     if (pm === "bank" && !v("depositor")) return err("입금자명을 입력해주세요.");
     if (rt === "cash_personal" && !/^01\d-\d{3,4}-\d{4}$/.test(v("cashPhone"))) return err("현금영수증 발급 휴대폰번호를 확인해주세요.");
@@ -220,7 +260,7 @@ async function showLecture(id) {
         if (cur.data().status !== "open") throw new Error("closed");
         if (cur.data().capacity > 0 && c >= cur.data().capacity) throw new Error("full");
         tx.set(appRef, {
-          lectureId: id, lectureTitle: L.title, fee: P.final, originalFee: P.fee, discountLabel: P.active ? `${P.label} ${P.text}` : "",
+          lectureId: id, lectureTitle: L.title, fee: free ? 0 : sel.amount, originalFee: P.fee, discountLabel: sel.d ? `${sel.d.label || "할인"} ${sel.d.P.text}` : "",
           name: v("name"), phone: v("phone"), email: v("email"), org: v("org"),
           payMethod: pm, depositor: pm === "bank" ? v("depositor") : "",
           receipt, memo: v("memo"), agree: true,
@@ -228,7 +268,7 @@ async function showLecture(id) {
         });
         tx.update(lecRef, { applicantCount: c + 1 });
       });
-      done(L, pm, v("name"), P);
+      done(L, pm, v("name"), { final: free ? 0 : sel.amount, cardUrl: sel.d?.cardUrl || L.payCard?.url });
     } catch (ex) {
       console.error(ex);
       btn.disabled = false; btn.textContent = "신청하기";
@@ -255,7 +295,7 @@ function done(L, pm, name, P) {
       </div>` : ""}
     ${pm === "card" ? `
       <p>결제 금액 <b>${won(P.final)}</b><br>아래 버튼을 눌러 카드결제를 완료해주세요.<br><b>결제까지 완료되어야 신청이 확정됩니다.</b></p>
-      <a class="btn" href="${esc(L.payCard.url)}" target="_blank" rel="noopener">💳 카드결제 페이지 바로가기</a>` : ""}
+      <a class="btn" href="${esc(P.cardUrl)}" target="_blank" rel="noopener">💳 카드결제 페이지 바로가기</a>` : ""}
     ${pm === "free" ? `<p>수강 안내는 입력하신 연락처로 보내드립니다.</p>` : ""}
   </section>`;
 }
