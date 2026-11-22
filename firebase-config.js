@@ -34,7 +34,7 @@ export function discPrice(fee, d, today = new Date().toISOString().slice(0, 10))
   fee = Number(fee || 0);
   if (!d || !d.type || d.type === "none" || !(Number(d.value) > 0) || (d.until && today > d.until)) return null;
   if (d.type === "percent") {
-    const p = Math.min(90, Math.max(0, Number(d.value)));
+    const p = Math.min(100, Math.max(0, Number(d.value)));
     return { final: Math.round(fee * (100 - p) / 100 / 10) * 10, text: `${p}% 할인` };
   }
   const amt = Math.min(fee, Number(d.value));
@@ -55,7 +55,7 @@ export function priceOf(L, today = new Date().toISOString().slice(0, 10)) {
   if (!active) return { fee, final: fee, active: false, text: "" };
   let final, text;
   if (d.type === "percent") {
-    const p = Math.min(90, Math.max(0, Number(d.value)));
+    const p = Math.min(100, Math.max(0, Number(d.value)));
     final = Math.round(fee * (100 - p) / 100 / 10) * 10;   // 10원 단위 반올림
     text = `${p}% 할인`;
   } else {

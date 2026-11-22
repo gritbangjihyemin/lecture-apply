@@ -328,7 +328,7 @@ function discRow(d = {}) {
   el.innerHTML = `
     <div class="grid3">
       <label>할인 이름 <i>*</i><input data-k="label" placeholder="예) 얼리버드, 재학생, 무료초청"></label>
-      <label>할인 방식<select data-k="type"><option value="percent">할인율 (0~90%)</option><option value="amount">정액 할인 (원)</option></select></label>
+      <label>할인 방식<select data-k="type"><option value="percent">할인율 (0~100%)</option><option value="amount">정액 할인 (원)</option></select></label>
       <label>할인 값 <i>*</i><input data-k="value" type="number" min="0" placeholder="예) 20 또는 30000"></label>
     </div>
     <div class="grid3">
@@ -394,7 +394,7 @@ F.addEventListener("submit", async e => {
   for (const d of discounts) {
     if (!d.label) return err("할인 이름을 입력해주세요.");
     if (!(d.value > 0)) return err(`‘${d.label}’ 할인 값을 입력해주세요.`);
-    if (d.type === "percent" && d.value > 90) return err(`‘${d.label}’ 할인율은 0~90% 사이로 입력해주세요.`);
+    if (d.type === "percent" && d.value > 100) return err(`‘${d.label}’ 할인율은 0~100% 사이로 입력해주세요.`);
     if (d.type === "amount" && d.value > fee) return err(`‘${d.label}’ 정액 할인은 수강료보다 클 수 없습니다.`);
     if (d.cardUrl && !/^https?:\/\//.test(d.cardUrl)) return err(`‘${d.label}’ 카드결제 링크를 https:// 로 시작하는 주소로 입력해주세요.`);
   }
