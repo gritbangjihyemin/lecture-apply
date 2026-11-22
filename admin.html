@@ -37,6 +37,8 @@
   .login{max-width:380px;margin:60px auto}
   .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:10px;font-weight:600;opacity:0;transition:.2s;pointer-events:none}
   .toast.show{opacity:1}
+  .sessrow{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+  .sessrow input{width:auto;margin:0}
 </style>
 </head>
 <body>
@@ -68,15 +70,14 @@
       <input type="hidden" name="id">
       <label>강의명 <i>*</i><input name="title" required></label>
       <label>강의 소개<textarea name="description" rows="3" placeholder="신청 페이지 상단에 보이는 소개 문구"></textarea></label>
-      <div class="grid2">
-        <label>일정 <i>*</i><textarea name="schedule" rows="2" required placeholder="예) 2026.12.5(토) 10:00~17:00&#10;2026.12.6(일) 10:00~13:00"></textarea></label>
-        <label>첫 강의일 (목록 정렬용)<input name="dateStart" type="date"></label>
-      </div>
+      <div class="lbl">일정 <i style="color:var(--red);font-style:normal">*</i> <span class="muted small">(날짜·시간을 선택하세요. 여러 회차면 ‘+ 일정 추가’)</span></div>
+      <div id="sessList"></div>
+      <button type="button" class="btn sm ghost" id="addSess" style="margin-bottom:14px">+ 일정 추가</button>
       <div class="grid3">
         <label>진행 방식 <i>*</i>
           <select name="format"><option value="offline">오프라인</option><option value="online">온라인</option><option value="hybrid">온·오프라인 병행</option></select>
         </label>
-        <label>총 시간<input name="totalHours" placeholder="예) 10시간 (2회)"></label>
+        <label>총 시간<input name="totalHours" placeholder="비우면 일정으로 자동 계산"></label>
         <label>수강료 (원, 무료는 0)<input name="fee" type="number" min="0" step="1000" value="0"></label>
       </div>
       <label>장소 / 접속 방법<textarea name="location" rows="2" placeholder="오프라인: 주소·강의실 / 온라인: 'ZOOM (접속 링크는 개별 안내)' 등"></textarea></label>
@@ -261,15 +262,46 @@ function openEdit(l = null, isCopy = false) {
     F.bankOn.checked = !!l.payBank?.enabled;
     F.cardOn.checked = !!l.payCard?.enabled; F.cardUrl.value = l.payCard?.url || "";
     setDiscs(l.discounts || (l.discount?.type && l.discount.type !== "none" ? [l.discount] : []));
+    setSess(l.sessions || []);
   } else {
     F.bankOn.checked = true; F.cardOn.checked = true; F.cardUrl.value = DEFAULT_CARD_URL; F.refundPolicy.value = DEFAULT_REFUND;
     setDiscs([]);
+    setSess([]);
   }
   $("#editErr").textContent = "";
   if (F.cardOn.checked && !F.cardUrl.value) F.cardUrl.value = DEFAULT_CARD_URL;
   discPreview(); bankInfo();
   showTab("edit"); window.scrollTo(0, 0);
 }
+/* ---------- 일정 (달력·시간 선택) ---------- */
+const WD = "일월화수목금토";
+const toMin = t => { const [h, mi] = t.split(":").map(Number); return h * 60 + mi; };
+function sessRow(s = {}) {
+  const el = document.createElement("div");
+  el.className = "sessrow";
+  el.innerHTML = `<input type="date" data-k="date"><input type="time" data-k="start" step="600"><span>~</span><input type="time" data-k="end" step="600"><button type="button" class="mini" data-rm>삭제</button>`;
+  el.querySelector("[data-k=date]").value = s.date || "";
+  el.querySelector("[data-k=start]").value = s.start || "10:00";
+  el.querySelector("[data-k=end]").value = s.end || "12:00";
+  return el;
+}
+function setSess(list) { $("#sessList").innerHTML = ""; (list.length ? list : [{}]).forEach(s => $("#sessList").appendChild(sessRow(s))); }
+function getSess() {
+  return [...document.querySelectorAll(".sessrow")]
+    .map(r => ({ date: r.querySelector("[data-k=date]").value, start: r.querySelector("[data-k=start]").value, end: r.querySelector("[data-k=end]").value }))
+    .filter(s => s.date).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+}
+function fmtSess(s) {
+  const [y, m, d] = s.date.split("-").map(Number);
+  return `${y}.${m}.${d}(${WD[new Date(y, m - 1, d).getDay()]}) ${s.start}${s.end ? "~" + s.end : ""}`.trim();
+}
+function autoHours(ss) {
+  const m = ss.reduce((t, s) => t + (s.start && s.end ? toMin(s.end) - toMin(s.start) : 0), 0);
+  return m > 0 ? `${+(m / 60).toFixed(1)}시간${ss.length > 1 ? ` (${ss.length}회)` : ""}` : "";
+}
+$("#addSess").onclick = () => { const last = getSess().slice(-1)[0]; $("#sessList").appendChild(sessRow(last ? { start: last.start, end: last.end } : {})); };
+$("#sessList").addEventListener("click", e => { if (e.target.dataset.rm !== undefined && document.querySelectorAll(".sessrow").length > 1) e.target.closest(".sessrow").remove(); });
+
 /* ---------- 할인 옵션 ---------- */
 const DK = ["label", "type", "value", "until", "cardUrl", "note"];
 function discRow(d = {}) {
@@ -331,7 +363,10 @@ F.addEventListener("submit", async e => {
   const v = k => F[k].value.trim();
   const err = m => $("#editErr").textContent = m;
   err("");
-  if (!v("title") || !v("schedule")) return err("강의명과 일정은 필수입니다.");
+  const sessions = getSess();
+  if (!v("title")) return err("강의명을 입력해주세요.");
+  if (!sessions.length) return err("일정(날짜)을 하나 이상 선택해주세요.");
+  if (sessions.some(s => s.start && s.end && s.end <= s.start)) return err("종료 시간은 시작 시간보다 늦어야 합니다.");
   const fee = Number(v("fee") || 0);
   if (fee > 0 && !F.bankOn.checked && !F.cardOn.checked) return err("유료 강의는 결제 방법을 하나 이상 선택해주세요.");
   if (F.bankOn.checked && !company.account) return err("‘업체 정보’ 탭에서 입금 계좌를 먼저 등록해주세요.");
@@ -346,8 +381,8 @@ F.addEventListener("submit", async e => {
     if (d.cardUrl && !/^https?:\/\//.test(d.cardUrl)) return err(`‘${d.label}’ 카드결제 링크를 https:// 로 시작하는 주소로 입력해주세요.`);
   }
   const data = {
-    title: v("title"), description: v("description"), schedule: v("schedule"), dateStart: v("dateStart"),
-    format: F.format.value, totalHours: v("totalHours"), fee, location: v("location"),
+    title: v("title"), description: v("description"), sessions, schedule: sessions.map(fmtSess).join("\n"), dateStart: sessions[0].date,
+    format: F.format.value, totalHours: v("totalHours") || autoHours(sessions), fee, location: v("location"),
     capacity: Number(v("capacity") || 0), deadline: v("deadline"), benefits: v("benefits"),
     refundPolicy: v("refundPolicy"), status: F.status.value,
     payBank: { enabled: F.bankOn.checked },
