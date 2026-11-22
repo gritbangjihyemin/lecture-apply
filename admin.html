@@ -279,27 +279,45 @@ const toMin = t => { const [h, mi] = t.split(":").map(Number); return h * 60 + m
 function sessRow(s = {}) {
   const el = document.createElement("div");
   el.className = "sessrow";
-  el.innerHTML = `<input type="date" data-k="date"><input type="time" data-k="start" step="600"><span>~</span><input type="time" data-k="end" step="600"><button type="button" class="mini" data-rm>삭제</button>`;
+  el.innerHTML = `<input type="date" data-k="date"><input type="time" data-k="start" step="600"><span>~</span><input type="date" data-k="endDate"><input type="time" data-k="end" step="600"><button type="button" class="mini" data-rm>삭제</button>`;
   el.querySelector("[data-k=date]").value = s.date || "";
   el.querySelector("[data-k=start]").value = s.start || "10:00";
+  el.querySelector("[data-k=endDate]").value = s.endDate || s.date || "";
   el.querySelector("[data-k=end]").value = s.end || "12:00";
+  // 시작 날짜를 고르면 종료 날짜가 비어있거나 더 빠를 때 같은 날로 맞춤
+  el.querySelector("[data-k=date]").addEventListener("change", e => {
+    const ed = el.querySelector("[data-k=endDate]");
+    if (!ed.value || ed.value < e.target.value) ed.value = e.target.value;
+  });
   return el;
 }
 function setSess(list) { $("#sessList").innerHTML = ""; (list.length ? list : [{}]).forEach(s => $("#sessList").appendChild(sessRow(s))); }
 function getSess() {
   return [...document.querySelectorAll(".sessrow")]
-    .map(r => ({ date: r.querySelector("[data-k=date]").value, start: r.querySelector("[data-k=start]").value, end: r.querySelector("[data-k=end]").value }))
+    .map(r => { const g = k => r.querySelector(`[data-k=${k}]`).value; return { date: g("date"), start: g("start"), endDate: g("endDate") || g("date"), end: g("end") }; })
     .filter(s => s.date).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
 }
+const fmtDate = ds => { const [y, m, d] = ds.split("-").map(Number); return `${y}.${m}.${d}(${WD[new Date(y, m - 1, d).getDay()]})`; };
+const stamp = (ds, t) => new Date(`${ds}T${t || "00:00"}`).getTime();
 function fmtSess(s) {
-  const [y, m, d] = s.date.split("-").map(Number);
-  return `${y}.${m}.${d}(${WD[new Date(y, m - 1, d).getDay()]}) ${s.start}${s.end ? "~" + s.end : ""}`.trim();
+  const ed = s.endDate || s.date;
+  if (ed === s.date) return `${fmtDate(s.date)} ${s.start}${s.end ? "~" + s.end : ""}`.trim();
+  return `${fmtDate(s.date)} ${s.start} ~ ${fmtDate(ed)} ${s.end}`.trim();
+}
+function sessMinutes(s) {
+  if (!s.start || !s.end) return 0;
+  const ed = s.endDate || s.date;
+  // 하루 안의 일정: 시작~종료 시간 / 여러 날 일정: 매일 같은 시간대로 진행한다고 보고 (일수 × 하루 시간)
+  const days = Math.round((stamp(ed) - stamp(s.date)) / 86400000) + 1;
+  const perDay = toMin(s.end) - toMin(s.start);
+  return perDay > 0 ? perDay * days : 0;
 }
 function autoHours(ss) {
-  const m = ss.reduce((t, s) => t + (s.start && s.end ? toMin(s.end) - toMin(s.start) : 0), 0);
+  const m = ss.reduce((t, s) => t + sessMinutes(s), 0);
   return m > 0 ? `${+(m / 60).toFixed(1)}시간${ss.length > 1 ? ` (${ss.length}회)` : ""}` : "";
 }
 $("#addSess").onclick = () => { const last = getSess().slice(-1)[0]; $("#sessList").appendChild(sessRow(last ? { start: last.start, end: last.end } : {})); };
+// 이전에 저장한 일정(종료 날짜 없음)도 그대로 불러옴
 $("#sessList").addEventListener("click", e => { if (e.target.dataset.rm !== undefined && document.querySelectorAll(".sessrow").length > 1) e.target.closest(".sessrow").remove(); });
 
 /* ---------- 할인 옵션 ---------- */
@@ -366,7 +384,7 @@ F.addEventListener("submit", async e => {
   const sessions = getSess();
   if (!v("title")) return err("강의명을 입력해주세요.");
   if (!sessions.length) return err("일정(날짜)을 하나 이상 선택해주세요.");
-  if (sessions.some(s => s.start && s.end && s.end <= s.start)) return err("종료 시간은 시작 시간보다 늦어야 합니다.");
+  if (sessions.some(s => stamp(s.endDate, s.end) <= stamp(s.date, s.start))) return err("종료 날짜·시간은 시작보다 늦어야 합니다.");
   const fee = Number(v("fee") || 0);
   if (fee > 0 && !F.bankOn.checked && !F.cardOn.checked) return err("유료 강의는 결제 방법을 하나 이상 선택해주세요.");
   if (F.bankOn.checked && !company.account) return err("‘업체 정보’ 탭에서 입금 계좌를 먼저 등록해주세요.");
