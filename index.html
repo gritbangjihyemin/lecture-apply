@@ -174,6 +174,8 @@ async function showLecture(id) {
     <p class="err" id="err"></p>
     <button class="btn" id="submitBtn">신청하기</button>
   </form>`}`;
+  app.insertAdjacentHTML("beforeend", LOOKUP_HTML);
+  bindLookup(id, L);
 
   if (closed) return;
   const f = $("#f");
@@ -260,8 +262,10 @@ async function showLecture(id) {
     try {
       const lecRef = doc(db, "lectures", id);
       const appRef = doc(collection(db, "applications"));
+      const regRef = doc(db, "regs", `${id}_${v("phone").replace(/\D/g, "")}`);
       await runTransaction(db, async tx => {
         const cur = await tx.get(lecRef);
+        if ((await tx.get(regRef)).exists()) throw new Error("dup");
         const c = cur.data().applicantCount || 0;
         if (cur.data().status !== "open") throw new Error("closed");
         if (cur.data().capacity > 0 && c >= cur.data().capacity) throw new Error("full");
@@ -272,15 +276,48 @@ async function showLecture(id) {
           receipt, memo: v("memo"), agree: true,
           status: "pending", receiptIssued: false, createdAt: serverTimestamp()
         });
+        tx.set(regRef, { lectureId: id, appId: appRef.id, name: v("name"), status: "pending", fee: free ? 0 : sel.amount, payMethod: pm, cardUrl: pm === "card" ? (sel.d?.cardUrl || L.payCard?.url || "") : "", createdAt: serverTimestamp() });
         tx.update(lecRef, { applicantCount: c + 1 });
       });
       done(L, pm, v("name"), { final: free ? 0 : sel.amount, cardUrl: sel.d?.cardUrl || L.payCard?.url });
     } catch (ex) {
       console.error(ex);
       btn.disabled = false; btn.textContent = "신청하기";
-      err(ex.message === "full" ? "정원이 마감되었습니다." : ex.message === "closed" ? "신청이 마감되었습니다." : "제출 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+      err(ex.message === "dup" ? "이미 이 연락처로 신청하셨습니다. 아래 ‘신청 내역 조회’에서 확인해주세요." : ex.message === "full" ? "정원이 마감되었습니다." : ex.message === "closed" ? "신청이 마감되었습니다." : "제출 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
     }
   });
+}
+
+/* ---------- 신청 내역 조회 ---------- */
+const LOOKUP_HTML = `
+  <section class="card" id="lookup">
+    <h2 style="margin:0 0 4px">신청 내역 조회</h2>
+    <p class="muted small" style="margin:0 0 12px">신청할 때 입력한 이름과 연락처로 진행 상태를 확인할 수 있어요.</p>
+    <div class="lk-row"><input id="lkName" placeholder="이름" maxlength="30"><input id="lkPhone" placeholder="010-0000-0000" inputmode="numeric" maxlength="13"><button class="btn sm" id="lkBtn" type="button">조회</button></div>
+    <div id="lkResult"></div>
+  </section>`;
+const LK_STATUS = { pending: ["결제 확인 전", "amber"], paid: ["수강 확정", "green"], cancel: ["신청 취소", "red"], refunded: ["환불 완료", "gray"] };
+function bindLookup(id, L) {
+  const ph = $("#lkPhone");
+  ph.addEventListener("input", e => e.target.value = e.target.value.replace(/\D/g, "").slice(0, 11).replace(/^(\d{3})(\d{3,4})(\d{0,4}).*/, (m, a, b, c) => c ? `${a}-${b}-${c}` : `${a}-${b}`));
+  $("#lkBtn").onclick = async () => {
+    const name = $("#lkName").value.trim(), digits = ph.value.replace(/\D/g, ""), out = $("#lkResult");
+    if (!name || digits.length < 10) { out.innerHTML = `<p class="err">이름과 연락처를 입력해주세요.</p>`; return; }
+    out.innerHTML = `<p class="muted small">조회 중…</p>`;
+    let r = null;
+    try { const s = await getDoc(doc(db, "regs", `${id}_${digits}`)); r = s.exists() ? s.data() : null; } catch {}
+    if (!r || r.name !== name) { out.innerHTML = `<p class="err">일치하는 신청 내역이 없습니다. 이름·연락처를 다시 확인해주세요.</p>`; return; }
+    const [label, color] = LK_STATUS[r.status] || ["접수", "gray"];
+    let body = "";
+    if (r.status === "pending") {
+      if (r.payMethod === "bank") body = `<div class="account left"><div class="benefit-t">아래 계좌로 입금해주시면 확인 후 확정 안내를 드립니다.</div><div><span class="muted">입금 계좌</span><b>${esc(L.payBank?.bank)} ${esc(L.payBank?.account)}</b></div><div><span class="muted">예금주</span>${esc(L.payBank?.holder)}</div><div><span class="muted">입금액</span><b>${won(r.fee)}</b></div></div>`;
+      else if (r.payMethod === "card" && r.cardUrl) body = `<p>카드결제가 아직 확인되지 않았어요. 결제하셨다면 확인 후 안내드립니다.</p><a class="btn" href="${esc(r.cardUrl)}" target="_blank" rel="noopener">💳 카드결제 페이지</a>`;
+      else body = `<p>신청이 접수되었습니다. 확인 후 안내드립니다.</p>`;
+    } else if (r.status === "paid") body = `<p>수강이 확정되었습니다. 일정에 맞춰 뵙겠습니다.</p>`;
+    else if (r.status === "cancel") body = `<p>${L.status === "cancelled" ? "강의가 폐강되어 신청이 취소되었습니다. " : "신청이 취소되었습니다. "}결제하신 경우 환불을 진행하며, 개별로 연락드립니다.</p>`;
+    else if (r.status === "refunded") body = `<p>환불이 완료되었습니다${r.refundAmount ? ` (${won(r.refundAmount)}${r.refundDate ? `, ${esc(r.refundDate)}` : ""})` : ""}.</p>`;
+    out.innerHTML = `<div class="lk-card"><div><b>${esc(r.name)}</b>님 · <span class="badge ${color}">${label}</span></div><div class="small muted" style="margin:4px 0 8px">${esc(L.title)} · 결제금액 ${won(r.fee)}</div>${body}</div>`;
+  };
 }
 
 /* ---------- 신청 완료 ---------- */
@@ -303,6 +340,7 @@ function done(L, pm, name, P) {
       <p>결제 금액 <b>${won(P.final)}</b><br>아래 버튼을 눌러 카드결제를 완료해주세요.<br><b>결제까지 완료되어야 신청이 확정됩니다.</b></p>
       <a class="btn" href="${esc(P.cardUrl)}" target="_blank" rel="noopener">💳 카드결제 페이지 바로가기</a>` : ""}
     ${pm === "free" ? `<p>수강 안내는 입력하신 연락처로 보내드립니다.</p>` : ""}
+    <p class="small muted" style="margin-top:18px">진행 상태는 <a href="${location.href.split("#")[0]}">신청 페이지</a> 하단 ‘신청 내역 조회’에서 언제든 확인할 수 있어요.</p>
   </section>`;
 }
 </script>

@@ -141,6 +141,7 @@
           <option value="">증빙 전체</option><option value="need">증빙 미발급</option><option value="done">증빙 발급완료</option>
         </select>
         <button class="btn sm ghost" id="csv">엑셀(CSV) 다운로드</button>
+        <button class="btn sm ghost" id="smsList">📱 문자 발송 명단</button>
       </div>
       <div class="summary" id="summary"></div>
       <div class="tblwrap"><table id="appTable"></table></div>
@@ -172,12 +173,31 @@
   <p class="err" id="rfErr"></p>
   <div class="acts"><button class="btn sm" type="submit">저장</button><button class="btn sm ghost" type="button" id="rfClose">닫기</button></div>
 </form></div>
+<div class="modal hidden" id="slModal"><div class="card">
+  <h2>문자 발송 명단</h2>
+  <p class="small muted" id="slInfo" style="margin:0 0 8px"></p>
+  <textarea id="slText" rows="8" readonly style="font-size:14px"></textarea>
+  <p class="small" id="slMsg" style="margin:8px 0 14px">반값문자 ‘받는 사람’ 칸에 붙여넣거나, 명단 파일(이름·휴대폰번호)을 주소록 업로드에 사용하세요.</p>
+  <div class="acts"><button class="btn sm" id="slCopy" type="button">번호 복사</button><button class="btn sm ghost" id="slDown" type="button">명단 엑셀(CSV) 받기</button><button class="btn sm ghost" id="slClose" type="button">닫기</button></div>
+</div></div>
+<div class="modal hidden" id="smsModal"><div class="card">
+  <h2 id="smsTitle">안내 문자</h2>
+  <select id="smsType" style="margin-bottom:10px">
+    <option value="pay">입금 안내 (신청 접수)</option>
+    <option value="confirm">결제 확인 · 수강 확정</option>
+    <option value="cancelReq">폐강 안내 · 환불계좌 요청</option>
+    <option value="refunded">환불 완료</option>
+  </select>
+  <textarea id="smsText" rows="8" style="font-size:14px"></textarea>
+  <p class="small" id="smsMsg" style="margin:8px 0 14px"></p>
+  <div class="acts"><button class="btn sm" id="smsCopy" type="button">문자 내용 복사</button><button class="btn sm ghost" id="smsClose" type="button">닫기</button></div>
+</div></div>
 <div class="toast" id="toast"></div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, getDocs, query, where, orderBy, onSnapshot, serverTimestamp, increment }
+import { getFirestore, collection, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, getDocs, query, where, orderBy, onSnapshot, serverTimestamp, increment }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { firebaseConfig, ADMIN_EMAILS, SITE, DEFAULT_CARD_URL, DEFAULT_REFUND, discPrice, discountsOf } from "./firebase-config.js";
 
@@ -191,6 +211,12 @@ const STATUS = { pending: "결제대기", paid: "결제완료", cancel: "취소�
 const INACTIVE = s => s === "cancel" || s === "refunded";
 const dupKey = a => a.lectureId + "|" + String(a.phone || "").replace(/\D/g, "");
 const needRefund = a => a.status === "cancel" && a.wasPaid && a.payMethod !== "free";
+// 신청자 본인 조회용 기록(regs) — 강의ID_연락처숫자
+const regKey = a => `${a.lectureId}_${String(a.phone || "").replace(/\D/g, "")}`;
+async function syncReg(a, data) {
+  try { await setDoc(doc(db, "regs", regKey(a)), { lectureId: a.lectureId, appId: a.id, name: a.name, fee: a.fee ?? 0, payMethod: a.payMethod || "", ...data }, { merge: true }); }
+  catch (e) { console.warn("regs sync", e); }
+}
 const PAY = { bank: "계좌이체", card: "카드결제", free: "무료" };
 const RTYPE = { none: "-", cash_personal: "현금영수증(소득공제)", cash_business: "현금영수증(지출증빙)", tax_invoice: "세금계산서" };
 const toast = m => { const t = $("#toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 1800); };
@@ -380,40 +406,39 @@ $("#addSess").onclick = () => { const last = getSess().slice(-1)[0]; $("#sessLis
 $("#sessList").addEventListener("click", e => { if (e.target.dataset.rm !== undefined && document.querySelectorAll(".sessrow").length > 1) e.target.closest(".sessrow").remove(); });
 
 /* ---------- 할인 옵션 ---------- */
-const DK = ["label", "type", "value", "until", "cardUrl", "note"];
+const DK = ["label", "price", "cardUrl", "note"];
 function discRow(d = {}) {
   const el = document.createElement("div");
   el.className = "paybox discrow";
   el.innerHTML = `
-    <div class="grid3">
-      <label>할인 이름 <i>*</i><input data-k="label" placeholder="예) 얼리버드, 재학생, 무료초청"></label>
-      <label>할인 방식<select data-k="type"><option value="percent">할인율 (0~100%)</option><option value="amount">정액 할인 (원)</option></select></label>
-      <label>할인 값 <i>*</i><input data-k="value" type="number" min="0" placeholder="예) 20 또는 30000"></label>
+    <div class="grid2">
+      <label>할인 대상 <i>*</i> <span class="muted small">(신청자가 고르는 이름)</span><input data-k="label" placeholder="예) 얼리버드, 재학생, PNG 강사양성과정 4기"></label>
+      <label>할인가 (실제 결제금액, 원) <i>*</i><input data-k="price" type="number" min="0" step="1000" placeholder="예) 120000 · 무료는 0"></label>
     </div>
-    <div class="grid3">
-      <label>할인 마감일 (선택)<input data-k="until" type="date"></label>
+    <div class="grid2">
       <label>할인가 카드결제 링크 (선택)<input data-k="cardUrl" type="url" placeholder="비우면 계좌이체로만 결제"></label>
       <label>신청자 안내 (선택)<input data-k="note" placeholder="예) 학생증 사본을 문자로 보내주세요"></label>
     </div>
     <div class="acts" style="justify-content:space-between;align-items:center;margin:-4px 0 12px"><span class="small disc-pv"></span><button type="button" class="mini" data-rm>삭제</button></div>`;
   DK.forEach(k => { if (d[k] != null) el.querySelector(`[data-k=${k}]`).value = d[k]; });
-  if (!d.type || d.type === "none") el.querySelector("[data-k=type]").value = "percent";
+  // 예전 방식(할인율·정액) 할인은 할인가로 바꿔서 보여줌
+  if (d.price == null && d.type && d.type !== "price") { const P = discPrice(F.fee.value, { ...d, until: "" }); if (P) el.querySelector("[data-k=price]").value = P.final; }
   return el;
 }
 function setDiscs(list) { $("#discList").innerHTML = ""; list.forEach(d => $("#discList").appendChild(discRow(d))); }
 function getDiscs() {
   return [...document.querySelectorAll(".discrow")].map(r => {
     const d = {}; DK.forEach(k => d[k] = r.querySelector(`[data-k=${k}]`).value.trim());
-    d.value = Number(d.value || 0); return d;
+    d.type = "price"; d.price = d.price === "" ? "" : Number(d.price); return d;
   });
 }
 function discPreview() {
   document.querySelectorAll(".discrow").forEach(r => {
     const d = {}; DK.forEach(k => d[k] = r.querySelector(`[data-k=${k}]`).value.trim());
-    const P = discPrice(F.fee.value, d, "0000-00-00");
+    d.type = "price"; const P = d.price === "" ? null : discPrice(F.fee.value, d);
     r.querySelector(".disc-pv").innerHTML = P
       ? `신청자 결제금액: <s class="muted">${won(F.fee.value)}</s> → <b style="color:var(--red)">${P.final ? won(P.final) : "무료"}</b> (${P.text})`
-      : `<span class="muted">할인 값을 입력하면 할인가가 표시됩니다</span>`;
+      : `<span class="muted">할인가는 정가(${won(F.fee.value)})보다 낮게 입력하세요 · 무료는 0</span>`;
   });
 }
 $("#addDisc").onclick = () => { $("#discList").appendChild(discRow()); discPreview(); };
@@ -451,10 +476,9 @@ F.addEventListener("submit", async e => {
 
   const discounts = getDiscs();
   for (const d of discounts) {
-    if (!d.label) return err("할인 이름을 입력해주세요.");
-    if (!(d.value > 0)) return err(`‘${d.label}’ 할인 값을 입력해주세요.`);
-    if (d.type === "percent" && d.value > 100) return err(`‘${d.label}’ 할인율은 0~100% 사이로 입력해주세요.`);
-    if (d.type === "amount" && d.value > fee) return err(`‘${d.label}’ 정액 할인은 수강료보다 클 수 없습니다.`);
+    if (!d.label) return err("할인 대상을 입력해주세요.");
+    if (d.price === "" || !(d.price >= 0)) return err(`‘${d.label}’ 할인가(결제금액)를 입력해주세요.`);
+    if (d.price >= fee) return err(`‘${d.label}’ 할인가는 정가(${won(fee)})보다 낮아야 합니다.`);
     if (d.cardUrl && !/^https?:\/\//.test(d.cardUrl)) return err(`‘${d.label}’ 카드결제 링크를 https:// 로 시작하는 주소로 입력해주세요.`);
   }
   const data = {
@@ -551,7 +575,7 @@ function renderApps() {
       <td>${receiptText(a.receipt)}</td>
       <td>${a.receipt?.type && a.receipt.type !== "none" ? `<label class="chk"><input type="checkbox" data-rc="${a.id}" ${a.receiptIssued ? "checked" : ""}> 발급완료</label>` : "-"}${INACTIVE(a.status) && a.receiptIssued ? `<div><span class="badge red" style="margin-top:4px" title="이미 발급한 증빙이 있어요. 홈택스에서 취소(마이너스) 발급 후 체크를 해제하세요.">증빙 취소 필요</span></div>` : ""}</td>
       <td class="sm">${a.memo ? `<div>${esc(a.memo)}</div>` : ""}<textarea class="note" data-note="${a.id}" rows="2" placeholder="관리자 비고 (입력 후 바깥 클릭 시 저장)">${esc(a.adminNote)}</textarea></td>
-      <td><button class="mini" data-del="${a.id}">삭제</button></td>
+      <td><button class="mini" data-sms="${a.id}">문자</button><br><button class="mini" style="margin-top:4px" data-del="${a.id}">삭제</button></td>
     </tr>`).join("");
 }
 $("#appTable").addEventListener("change", async e => {
@@ -562,6 +586,7 @@ $("#appTable").addEventListener("change", async e => {
     if (now === "paid") upd.wasPaid = true;
     if (now === "cancel" && was === "paid") upd.wasPaid = true;
     await updateDoc(doc(db, "applications", a.id), upd);
+    syncReg(a, { status: now });
     // 취소·환불 ↔ 복구 시 정원 카운트 조정
     if (!INACTIVE(was) && INACTIVE(now)) await updateDoc(doc(db, "lectures", a.lectureId), { applicantCount: increment(-1) }).catch(() => {});
     if (INACTIVE(was) && !INACTIVE(now)) await updateDoc(doc(db, "lectures", a.lectureId), { applicantCount: increment(1) }).catch(() => {});
@@ -573,10 +598,12 @@ $("#appTable").addEventListener("change", async e => {
 });
 $("#appTable").addEventListener("click", async e => {
   if (e.target.dataset.refund) { openRefund(apps.find(x => x.id === e.target.dataset.refund)); return; }
+  if (e.target.dataset.sms) { openSms(apps.find(x => x.id === e.target.dataset.sms)); return; }
   const id = e.target.dataset.del; if (!id) return;
   const a = apps.find(x => x.id === id);
   if (!confirm(`${a.name}님의 신청을 삭제할까요? (복구 불가)`)) return;
   await deleteDoc(doc(db, "applications", id));
+  try { const s = await getDoc(doc(db, "regs", regKey(a))); if (s.exists() && s.data().appId === a.id) await deleteDoc(doc(db, "regs", regKey(a))); } catch {}
   if (!INACTIVE(a.status)) await updateDoc(doc(db, "lectures", a.lectureId), { applicantCount: increment(-1) }).catch(() => {});
   toast("삭제했어요");
 });
@@ -608,9 +635,66 @@ RF.addEventListener("submit", async e => {
     if (!INACTIVE(a.status)) await updateDoc(doc(db, "lectures", a.lectureId), { applicantCount: increment(-1) }).catch(() => {});
   }
   await updateDoc(doc(db, "applications", a.id), upd);
+  syncReg(a, { status: upd.status || a.status, refundDate: refund.date, refundAmount: refund.amount });
   $("#refundModal").classList.add("hidden");
   toast(RF.done.checked ? `${a.name} → 환불완료` : "환불 정보를 저장했어요");
 });
+
+/* ---------- 안내 문자 템플릿 ---------- */
+let smsApp = null;
+function smsTemplates(a) {
+  const L = lectures.find(l => l.id === a.lectureId) || {};
+  const head = `[${SITE.name}] ${a.name}님,`;
+  const acc = company.account ? `${company.bank} ${company.account} (예금주 ${company.holder})` : "(업체 정보에 계좌를 등록해주세요)";
+  const where = L.location ? `\n${L.format === "online" ? "접속" : "장소"}: ${L.location.replace(/\n/g, " ")}` : "";
+  return {
+    pay: `${head} '${a.lectureTitle}' 신청이 접수되었습니다.\n입금 계좌: ${acc}\n입금 금액: ${won(a.fee)}\n입금이 확인되면 수강 확정 안내를 드리겠습니다.\n신청 내역 조회: ${linkOf(a.lectureId)}`,
+    confirm: `${head} '${a.lectureTitle}' ${a.fee ? "결제가 확인되어 " : ""}수강이 확정되었습니다.\n일정: ${(L.schedule || "").replace(/\n/g, " / ")}${where}\n감사합니다.`,
+    cancelReq: `${head} 신청하신 '${a.lectureTitle}' 강의가 아쉽게도 폐강되었습니다. 불편을 드려 죄송합니다.\n` +
+      (a.payMethod === "card" ? "카드결제는 결제 취소로 환불해 드리겠습니다." : a.payMethod === "free" ? "다음 강의에서 꼭 뵙겠습니다." : "환불받으실 은행 / 계좌번호 / 예금주를 이 번호로 회신해 주시면 빠르게 환불해 드리겠습니다."),
+    refunded: `${head} '${a.lectureTitle}' 수강료 ${won(a.refund?.amount ?? a.fee)} 환불이 ${a.payMethod === "card" ? "카드 결제취소로" : "요청하신 계좌로"} 완료되었습니다. 감사합니다.`
+  };
+}
+function openSms(a) {
+  smsApp = a;
+  $("#smsTitle").textContent = `${a.name} 님께 보낼 문자 (${a.phone})`;
+  $("#smsType").value = { pending: "pay", paid: "confirm", cancel: "cancelReq", refunded: "refunded" }[a.status] || "pay";
+  $("#smsText").value = smsTemplates(a)[$("#smsType").value];
+  $("#smsMsg").textContent = "내용을 고친 뒤 복사해서 문자로 보내세요.";
+  $("#smsModal").classList.remove("hidden");
+}
+$("#smsType").onchange = () => { $("#smsText").value = smsTemplates(smsApp)[$("#smsType").value]; };
+$("#smsCopy").onclick = async () => {
+  const ok = await copyText($("#smsText").value);
+  if (!ok) $("#smsText").select();
+  $("#smsMsg").innerHTML = ok ? `<span style="color:var(--green);font-weight:700">✓ 복사되었습니다.</span> 문자 앱에 붙여넣기 하세요.` : `자동 복사가 막혀 있어요. 내용이 선택되어 있으니 <b>Ctrl+C</b>로 복사하세요.`;
+};
+$("#smsClose").onclick = () => $("#smsModal").classList.add("hidden");
+
+/* ---------- 문자 발송 명단 (현재 필터 기준) ---------- */
+let slList = [];
+$("#smsList").onclick = () => {
+  const seen = new Set();
+  slList = filtered().filter(a => { const k = String(a.phone || "").replace(/\D/g, ""); if (!k || seen.has(k)) return false; seen.add(k); return true; });
+  const lec = lectures.find(l => l.id === $("#appLec").value);
+  const st = $("#appFilter").selectedOptions[0].textContent;
+  $("#slInfo").textContent = `${lec ? lec.title : "전체 강의"} · ${st} · ${slList.length}명 (같은 번호는 1번만)`;
+  $("#slText").value = slList.map(a => a.phone).join("\n");
+  $("#slModal").classList.remove("hidden");
+};
+$("#slCopy").onclick = async () => {
+  const ok = await copyText($("#slText").value);
+  if (!ok) $("#slText").select();
+  $("#slMsg").innerHTML = ok ? `<span style="color:var(--green);font-weight:700">✓ ${slList.length}개 번호를 복사했습니다.</span> 반값문자 ‘받는 사람’ 칸에 붙여넣으세요.` : `자동 복사가 막혀 있어요. 번호가 선택되어 있으니 <b>Ctrl+C</b>로 복사하세요.`;
+};
+$("#slDown").onclick = () => {
+  const rows = [["이름", "휴대폰번호", "강의명", "결제금액"], ...slList.map(a => [a.name, a.phone, a.lectureTitle, a.fee ?? 0])];
+  const csv = rows.map(r => r.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  const el = document.createElement("a");
+  el.href = URL.createObjectURL(new Blob([String.fromCharCode(0xFEFF) + csv], { type: "text/csv;charset=utf-8" }));
+  el.download = `문자명단_${new Date().toISOString().slice(0, 10)}.csv`; el.click();
+};
+$("#slClose").onclick = () => $("#slModal").classList.add("hidden");
 
 /* ---------- 폐강 처리 ---------- */
 async function cancelLecture(l) {
@@ -622,6 +706,7 @@ async function cancelLecture(l) {
     const upd = { status: "cancel", statusAt: serverTimestamp(), adminNote: [a.adminNote, "폐강"].filter(Boolean).join(" / ") };
     if (a.status === "paid") upd.wasPaid = true;
     await updateDoc(doc(db, "applications", a.id), upd);
+    await syncReg(a, { status: "cancel" });
   }
   await updateDoc(doc(db, "lectures", l.id), { status: "cancelled", applicantCount: 0 });
   toast("폐강 처리했어요");

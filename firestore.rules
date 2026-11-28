@@ -28,6 +28,19 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // 신청 기록(중복 신청 차단·본인 조회용): 강의ID_연락처 키로 1건씩만 조회 가능
+    match /regs/{regId} {
+      allow get: if true;
+      allow list, update, delete: if isAdmin();
+      allow create: if isAdmin() || (
+        request.resource.data.keys().hasOnly(['lectureId','appId','name','status','fee','payMethod','cardUrl','createdAt'])
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time
+        && regId.matches(request.resource.data.lectureId + '_[0-9]{10,11}')
+        && getAfter(/databases/$(database)/documents/applications/$(request.resource.data.appId)).data.lectureId == request.resource.data.lectureId
+      );
+    }
+
     // 신청서: 누구나 제출만 가능 / 조회·수정·삭제는 관리자만 (개인정보 보호)
     match /applications/{appId} {
       allow read, update, delete: if isAdmin();

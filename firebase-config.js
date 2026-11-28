@@ -32,6 +32,12 @@ export const DEFAULT_REFUND = `· 수강 시작 전: 전액 환불
 // ▼ 할인 옵션 1개의 할인가 계산 (마감일 지났거나 값이 0이면 null)
 export function discPrice(fee, d, today = new Date().toISOString().slice(0, 10)) {
   fee = Number(fee || 0);
+  // 할인가(결제금액)를 직접 입력한 방식
+  if (d && d.type === "price") {
+    const f = Number(d.price);
+    if (d.price === "" || d.price == null || !(f >= 0) || f >= fee) return null;
+    return { final: f, text: f === 0 ? "무료" : `${(fee - f).toLocaleString("ko-KR")}원 할인` };
+  }
   if (!d || !d.type || d.type === "none" || !(Number(d.value) > 0) || (d.until && today > d.until)) return null;
   if (d.type === "percent") {
     const p = Math.min(100, Math.max(0, Number(d.value)));
