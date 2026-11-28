@@ -42,6 +42,8 @@
   .modal{position:fixed;inset:0;background:rgba(20,24,35,.4);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
   .modal .card{max-width:560px;width:100%;margin:0}
   #lmInput{font-size:14px;background:#f8f9fc}
+  .note{width:100%;min-width:150px;margin:4px 0 0;padding:6px 8px;font-size:12.5px;border-radius:8px;resize:vertical}
+  .badge.dup{background:#fdeaea;color:var(--red)}
 </style>
 </head>
 <body>
@@ -107,7 +109,7 @@
 
       <label>환불 규정 <span class="muted small">(비워두면 기본 환불 규정이 표시됩니다)</span><textarea name="refundPolicy" rows="5"></textarea></label>
       <label>상태
-        <select name="status"><option value="open">모집중 (신청 받기)</option><option value="closed">마감 (신청 막기)</option></select>
+        <select name="status"><option value="open">모집중 (신청 받기)</option><option value="closed">마감 (신청 막기)</option><option value="cancelled">폐강</option></select>
       </label>
       <p class="err" id="editErr"></p>
       <div class="acts"><button class="btn sm" type="submit">저장</button><button class="btn sm ghost" type="button" id="cancelEdit">취소</button></div>
@@ -133,7 +135,7 @@
       <div class="toolbar">
         <select id="appLec"></select>
         <select id="appFilter">
-          <option value="">전체 상태</option><option value="pending">결제대기</option><option value="paid">결제완료</option><option value="cancel">취소/환불</option>
+          <option value="">전체 상태</option><option value="pending">결제대기</option><option value="paid">결제완료</option><option value="cancel">취소·환불대기</option><option value="refunded">환불완료</option><option value="refundNeed">환불 필요(결제했던 취소건)</option><option value="dup">중복 신청</option>
         </select>
         <select id="appReceipt">
           <option value="">증빙 전체</option><option value="need">증빙 미발급</option><option value="done">증빙 발급완료</option>
@@ -151,6 +153,25 @@
   <p class="small" id="lmMsg" style="margin:8px 0 14px"></p>
   <div class="acts"><button class="btn sm" id="lmCopy" type="button">링크 복사</button><a class="btn sm ghost" id="lmOpen" target="_blank" rel="noopener">열어보기</a><button class="btn sm ghost" id="lmClose" type="button">닫기</button></div>
 </div></div>
+<div class="modal hidden" id="refundModal"><form class="card" id="rfForm" novalidate>
+  <h2 id="rfTitle">환불 정보</h2>
+  <p class="small muted" id="rfInfo"></p>
+  <div id="rfBankFields">
+    <div class="grid3">
+      <label>환불 은행<input name="bank" placeholder="예) 국민은행"></label>
+      <label>환불 계좌번호<input name="account"></label>
+      <label>예금주<input name="holder"></label>
+    </div>
+  </div>
+  <p class="small" id="rfCardNote" style="margin:0 0 14px;color:var(--amber)">카드결제 건은 결제사(와이즈케어)에서 결제취소로 환불합니다. 계좌 입력은 필요 없어요.</p>
+  <div class="grid2">
+    <label>환불 금액 (원)<input name="amount" type="number" min="0"></label>
+    <label>환불일<input name="date" type="date"></label>
+  </div>
+  <label class="chk" style="margin-bottom:14px"><input type="checkbox" name="done"> <span>환불을 마쳤어요 → 상태를 <b>환불완료</b>로 변경</span></label>
+  <p class="err" id="rfErr"></p>
+  <div class="acts"><button class="btn sm" type="submit">저장</button><button class="btn sm ghost" type="button" id="rfClose">닫기</button></div>
+</form></div>
 <div class="toast" id="toast"></div>
 
 <script type="module">
@@ -166,7 +187,10 @@ const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAl
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const won = n => Number(n || 0).toLocaleString("ko-KR") + "원";
 const FORMAT = { offline: "오프라인", online: "온라인", hybrid: "병행" };
-const STATUS = { pending: "결제대기", paid: "결제완료", cancel: "취소/환불" };
+const STATUS = { pending: "결제대기", paid: "결제완료", cancel: "취소·환불대기", refunded: "환불완료" };
+const INACTIVE = s => s === "cancel" || s === "refunded";
+const dupKey = a => a.lectureId + "|" + String(a.phone || "").replace(/\D/g, "");
+const needRefund = a => a.status === "cancel" && a.wasPaid && a.payMethod !== "free";
 const PAY = { bank: "계좌이체", card: "카드결제", free: "무료" };
 const RTYPE = { none: "-", cash_personal: "현금영수증(소득공제)", cash_business: "현금영수증(지출증빙)", tax_invoice: "세금계산서" };
 const toast = m => { const t = $("#toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 1800); };
@@ -222,7 +246,7 @@ function renderList() {
       <div class="lec-row">
         <div>
           <div class="badges">
-            ${l.status === "open" ? `<span class="badge green">모집중</span>` : `<span class="badge red">마감</span>`}
+            ${l.status === "open" ? `<span class="badge green">모집중</span>` : l.status === "cancelled" ? `<span class="badge red">폐강</span>` : `<span class="badge gray">마감</span>`}
             <span class="badge">${FORMAT[l.format] || ""}</span>
             ${l.payBank?.enabled ? `<span class="badge gray">계좌</span>` : ""}${l.payCard?.enabled ? `<span class="badge gray">카드</span>` : ""}
           </div>
@@ -238,6 +262,7 @@ function renderList() {
           <button class="btn sm ghost" data-a="edit" data-id="${l.id}">수정</button>
           <button class="btn sm ghost" data-a="dup" data-id="${l.id}">복제</button>
           <button class="btn sm ghost" data-a="toggle" data-id="${l.id}">${l.status === "open" ? "마감하기" : "다시 열기"}</button>
+          ${l.status !== "cancelled" ? `<button class="btn sm ghost" data-a="cancelLec" data-id="${l.id}">폐강 처리</button>` : ""}
           <button class="btn sm danger" data-a="del" data-id="${l.id}">삭제</button>
         </div>
       </div>
@@ -252,6 +277,7 @@ $("#pList").addEventListener("click", async e => {
     case "edit": openEdit(l); break;
     case "dup": { const { id, createdAt, applicantCount, ...rest } = l; openEdit({ ...rest, title: rest.title + " (복사본)" }, true); break; }
     case "toggle": await updateDoc(doc(db, "lectures", l.id), { status: l.status === "open" ? "closed" : "open" }); break;
+    case "cancelLec": await cancelLecture(l); break;
     case "del":
       if ((l.applicantCount || 0) > 0 && !confirm(`신청자가 ${l.applicantCount}명 있습니다. 강의만 삭제되고 신청자 기록은 남습니다. 삭제할까요?`)) return;
       if (!(l.applicantCount > 0) && !confirm("이 강의를 삭제할까요?")) return;
@@ -468,8 +494,19 @@ function loadApps() {
 
 function filtered() {
   const st = $("#appFilter").value, rc = $("#appReceipt").value;
-  return apps.filter(a => (!st || a.status === st) &&
+  const cnt = dupCount();
+  return apps.filter(a => (!st || (st === "refundNeed" ? needRefund(a) : st === "dup" ? cnt[dupKey(a)] > 1 : a.status === st)) &&
     (!rc || (a.receipt?.type !== "none" && (rc === "done" ? a.receiptIssued : !a.receiptIssued))));
+}
+function dupCount() { const c = {}; apps.forEach(a => { c[dupKey(a)] = (c[dupKey(a)] || 0) + 1; }); return c; }
+function refundText(a) {
+  const r = a.refund || {};
+  if (a.payMethod === "free") return "";
+  const parts = [];
+  if (r.bank || r.account) parts.push(`${esc(r.bank)} ${esc(r.account)} ${esc(r.holder)}`);
+  if (r.amount) parts.push(won(r.amount));
+  if (r.date) parts.push(esc(r.date.slice(5).replace("-", "/")));
+  return parts.join(" · ");
 }
 const dt = ts => ts?.toDate ? ts.toDate().toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
 function receiptText(r) {
@@ -482,31 +519,38 @@ function receiptText(r) {
 function renderApps() {
   const list = filtered();
   const paid = apps.filter(a => a.status === "paid");
-  const needR = apps.filter(a => a.receipt?.type && a.receipt.type !== "none" && !a.receiptIssued && a.status !== "cancel");
+  const needR = apps.filter(a => a.receipt?.type && a.receipt.type !== "none" && !a.receiptIssued && !INACTIVE(a.status));
+  const cnt = dupCount();
+  const dups = apps.filter(a => cnt[dupKey(a)] > 1).length;
   $("#summary").innerHTML = `
-    <div>전체 신청<b>${apps.filter(a => a.status !== "cancel").length}명</b></div>
+    <div>전체 신청<b>${apps.filter(a => !INACTIVE(a.status)).length}명</b></div>
     <div>결제대기<b>${apps.filter(a => a.status === "pending").length}명</b></div>
     <div>결제완료<b>${paid.length}명</b></div>
     <div>결제완료 금액<b>${won(paid.reduce((s, a) => s + (a.fee || 0), 0))}</b></div>
-    <div>증빙 발급 대기<b style="color:var(--amber)">${needR.length}건</b></div>`;
+    <div>증빙 발급 대기<b style="color:var(--amber)">${needR.length}건</b></div>
+    <div>환불 필요<b style="color:var(--red)">${apps.filter(needRefund).length}건</b></div>
+    <div>환불완료<b>${apps.filter(a => a.status === "refunded").length}건</b></div>
+    ${dups ? `<div>중복 신청 의심<b style="color:var(--red)">${dups}건</b></div>` : ""}`;
   if (!list.length) { $("#appTable").innerHTML = `<tr><td class="empty">신청자가 없습니다.</td></tr>`; return; }
   const showLec = !$("#appLec").value;
   $("#appTable").innerHTML = `
-    <tr><th>#</th>${showLec ? "<th>강의</th>" : ""}<th>신청일</th><th>이름</th><th>연락처 / 이메일</th><th>소속</th><th>결제</th><th>입금자명</th><th>상태</th><th>증빙 요청</th><th>증빙 발급</th><th>메모</th><th></th></tr>` +
+    <tr><th>#</th>${showLec ? "<th>강의</th>" : ""}<th>신청일</th><th>이름</th><th>연락처 / 이메일</th><th>소속</th><th>결제</th><th>입금자명</th><th>상태</th><th>증빙 요청</th><th>증빙 발급</th><th>신청자 메모 / 관리자 비고</th><th></th></tr>` +
     list.map((a, i) => `
     <tr>
       <td>${list.length - i}</td>
       ${showLec ? `<td>${esc(a.lectureTitle)}</td>` : ""}
       <td class="sm">${dt(a.createdAt)}</td>
-      <td><b>${esc(a.name)}</b></td>
+      <td><b>${esc(a.name)}</b>${cnt[dupKey(a)] > 1 ? ` <span class="badge dup" title="같은 강의에 같은 연락처로 ${cnt[dupKey(a)]}번 신청">중복</span>` : ""}</td>
       <td>${esc(a.phone)}<br><span class="sm">${esc(a.email)}</span></td>
       <td>${esc(a.org)}</td>
       <td>${PAY[a.payMethod] || ""}<br><span class="sm">${won(a.fee)}${a.discountLabel ? `<br>(${esc(a.discountLabel)})` : ""}</span></td>
       <td>${esc(a.depositor)}</td>
-      <td><select data-st="${a.id}">${Object.entries(STATUS).map(([k, t]) => `<option value="${k}" ${a.status === k ? "selected" : ""}>${t}</option>`).join("")}</select></td>
+      <td><select data-st="${a.id}">${Object.entries(STATUS).map(([k, t]) => `<option value="${k}" ${a.status === k ? "selected" : ""}>${t}</option>`).join("")}</select>
+        ${needRefund(a) ? `<div><span class="badge red" style="margin-top:4px">환불 필요</span></div>` : ""}
+        ${INACTIVE(a.status) && a.payMethod !== "free" ? `<div class="sm" style="margin-top:4px">${refundText(a)}</div><button class="mini" style="margin-top:4px" data-refund="${a.id}">환불정보</button>` : ""}</td>
       <td>${receiptText(a.receipt)}</td>
-      <td>${a.receipt?.type && a.receipt.type !== "none" ? `<label class="chk"><input type="checkbox" data-rc="${a.id}" ${a.receiptIssued ? "checked" : ""}> 발급완료</label>` : "-"}</td>
-      <td class="sm">${esc(a.memo)}</td>
+      <td>${a.receipt?.type && a.receipt.type !== "none" ? `<label class="chk"><input type="checkbox" data-rc="${a.id}" ${a.receiptIssued ? "checked" : ""}> 발급완료</label>` : "-"}${INACTIVE(a.status) && a.receiptIssued ? `<div><span class="badge red" style="margin-top:4px" title="이미 발급한 증빙이 있어요. 홈택스에서 취소(마이너스) 발급 후 체크를 해제하세요.">증빙 취소 필요</span></div>` : ""}</td>
+      <td class="sm">${a.memo ? `<div>${esc(a.memo)}</div>` : ""}<textarea class="note" data-note="${a.id}" rows="2" placeholder="관리자 비고 (입력 후 바깥 클릭 시 저장)">${esc(a.adminNote)}</textarea></td>
       <td><button class="mini" data-del="${a.id}">삭제</button></td>
     </tr>`).join("");
 }
@@ -514,31 +558,85 @@ $("#appTable").addEventListener("change", async e => {
   const t = e.target;
   if (t.dataset.st) {
     const a = apps.find(x => x.id === t.dataset.st), was = a.status, now = t.value;
-    await updateDoc(doc(db, "applications", a.id), { status: now, statusAt: serverTimestamp() });
-    // 취소 ↔ 복구 시 정원 카운트 조정
-    if (was !== "cancel" && now === "cancel") await updateDoc(doc(db, "lectures", a.lectureId), { applicantCount: increment(-1) }).catch(() => {});
-    if (was === "cancel" && now !== "cancel") await updateDoc(doc(db, "lectures", a.lectureId), { applicantCount: increment(1) }).catch(() => {});
+    const upd = { status: now, statusAt: serverTimestamp() };
+    if (now === "paid") upd.wasPaid = true;
+    if (now === "cancel" && was === "paid") upd.wasPaid = true;
+    await updateDoc(doc(db, "applications", a.id), upd);
+    // 취소·환불 ↔ 복구 시 정원 카운트 조정
+    if (!INACTIVE(was) && INACTIVE(now)) await updateDoc(doc(db, "lectures", a.lectureId), { applicantCount: increment(-1) }).catch(() => {});
+    if (INACTIVE(was) && !INACTIVE(now)) await updateDoc(doc(db, "lectures", a.lectureId), { applicantCount: increment(1) }).catch(() => {});
     toast(`${a.name} → ${STATUS[now]}`);
+    if ((now === "cancel" || now === "refunded") && (was === "paid" || a.wasPaid) && a.payMethod !== "free") openRefund({ ...a, ...upd, status: now });
   }
   if (t.dataset.rc) await updateDoc(doc(db, "applications", t.dataset.rc), { receiptIssued: t.checked });
+  if (t.dataset.note !== undefined) { await updateDoc(doc(db, "applications", t.dataset.note), { adminNote: t.value.trim() }); toast("비고를 저장했어요"); }
 });
 $("#appTable").addEventListener("click", async e => {
+  if (e.target.dataset.refund) { openRefund(apps.find(x => x.id === e.target.dataset.refund)); return; }
   const id = e.target.dataset.del; if (!id) return;
   const a = apps.find(x => x.id === id);
   if (!confirm(`${a.name}님의 신청을 삭제할까요? (복구 불가)`)) return;
   await deleteDoc(doc(db, "applications", id));
-  if (a.status !== "cancel") await updateDoc(doc(db, "lectures", a.lectureId), { applicantCount: increment(-1) }).catch(() => {});
+  if (!INACTIVE(a.status)) await updateDoc(doc(db, "lectures", a.lectureId), { applicantCount: increment(-1) }).catch(() => {});
   toast("삭제했어요");
 });
 
+/* ---------- 환불 정보 ---------- */
+const RF = $("#rfForm"); let rfApp = null;
+function openRefund(a) {
+  rfApp = a; const r = a.refund || {};
+  $("#rfTitle").textContent = `${a.name} 님 환불 정보`;
+  $("#rfInfo").textContent = `${a.lectureTitle} · ${PAY[a.payMethod] || ""} ${won(a.fee)} · ${a.phone}`;
+  const isCard = a.payMethod === "card";
+  $("#rfBankFields").classList.toggle("hidden", isCard); $("#rfCardNote").classList.toggle("hidden", !isCard);
+  RF.bank.value = r.bank || ""; RF.account.value = r.account || ""; RF.holder.value = r.holder || a.depositor || a.name || "";
+  RF.amount.value = r.amount ?? a.fee ?? 0; RF.date.value = r.date || new Date().toISOString().slice(0, 10);
+  RF.done.checked = a.status === "refunded" || !!r.date;
+  $("#rfErr").textContent = "";
+  $("#refundModal").classList.remove("hidden");
+}
+$("#rfClose").onclick = () => $("#refundModal").classList.add("hidden");
+RF.addEventListener("submit", async e => {
+  e.preventDefault();
+  const a = rfApp, isCard = a.payMethod === "card";
+  const refund = { amount: Number(RF.amount.value || 0), date: RF.done.checked ? RF.date.value : "" };
+  if (!isCard) Object.assign(refund, { bank: RF.bank.value.trim(), account: RF.account.value.trim(), holder: RF.holder.value.trim() });
+  if (RF.done.checked && !isCard && (!refund.bank || !refund.account)) { $("#rfErr").textContent = "환불 은행과 계좌번호를 입력해주세요."; return; }
+  const upd = { refund };
+  if (RF.done.checked && a.status !== "refunded") {
+    upd.status = "refunded"; upd.statusAt = serverTimestamp();
+    if (!INACTIVE(a.status)) await updateDoc(doc(db, "lectures", a.lectureId), { applicantCount: increment(-1) }).catch(() => {});
+  }
+  await updateDoc(doc(db, "applications", a.id), upd);
+  $("#refundModal").classList.add("hidden");
+  toast(RF.done.checked ? `${a.name} → 환불완료` : "환불 정보를 저장했어요");
+});
+
+/* ---------- 폐강 처리 ---------- */
+async function cancelLecture(l) {
+  const snap = await getDocs(query(collection(db, "applications"), where("lectureId", "==", l.id)));
+  const list = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(a => !INACTIVE(a.status));
+  const paidN = list.filter(a => a.status === "paid" && a.payMethod !== "free").length;
+  if (!confirm(`‘${l.title}’을(를) 폐강 처리할까요?\n\n· 신청 페이지에 ‘폐강’ 안내가 표시되고 신청이 막힙니다.\n· 신청자 ${list.length}명이 모두 ‘취소·환불대기’로 바뀝니다.\n· 그중 결제완료 ${paidN}명은 ‘환불 필요’로 표시됩니다.`)) return;
+  for (const a of list) {
+    const upd = { status: "cancel", statusAt: serverTimestamp(), adminNote: [a.adminNote, "폐강"].filter(Boolean).join(" / ") };
+    if (a.status === "paid") upd.wasPaid = true;
+    await updateDoc(doc(db, "applications", a.id), upd);
+  }
+  await updateDoc(doc(db, "lectures", l.id), { status: "cancelled", applicantCount: 0 });
+  toast("폐강 처리했어요");
+  $("#appLec").value = l.id; $("#appFilter").value = paidN ? "refundNeed" : ""; showTab("apps");
+}
+
 /* ---------- CSV ---------- */
 $("#csv").onclick = () => {
-  const head = ["강의명","신청일시","이름","연락처","이메일","소속","결제방법","정가","결제금액","적용할인","입금자명","상태","증빙종류","발급번호(휴대폰/사업자번호)","상호","대표자","세금계산서 이메일","업태/종목","증빙발급","메모"];
+  const head = ["강의명","신청일시","이름","연락처","이메일","소속","결제방법","정가","결제금액","적용할인","입금자명","상태","증빙종류","발급번호(휴대폰/사업자번호)","상호","대표자","세금계산서 이메일","업태/종목","증빙발급","신청자 메모","관리자 비고","환불 은행","환불 계좌","환불 예금주","환불 금액","환불일"];
   const rows = filtered().map(a => [
     a.lectureTitle, a.createdAt?.toDate?.().toLocaleString("ko-KR") || "", a.name, a.phone, a.email, a.org,
     PAY[a.payMethod] || "", a.originalFee ?? a.fee, a.fee, a.discountLabel || "", a.depositor, STATUS[a.status], RTYPE[a.receipt?.type] || "-",
     a.receipt?.number || "", a.receipt?.bizName || "", a.receipt?.ceo || "", a.receipt?.invoiceEmail || "", a.receipt?.bizType || "",
-    a.receipt?.type && a.receipt.type !== "none" ? (a.receiptIssued ? "발급완료" : "미발급") : "", a.memo
+    a.receipt?.type && a.receipt.type !== "none" ? (a.receiptIssued ? "발급완료" : "미발급") : "", a.memo, a.adminNote || "",
+    a.refund?.bank || "", a.refund?.account || "", a.refund?.holder || "", a.refund?.amount ?? "", a.refund?.date || ""
   ]);
   const csv = [head, ...rows].map(r => r.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
   const lec = lectures.find(l => l.id === $("#appLec").value);
